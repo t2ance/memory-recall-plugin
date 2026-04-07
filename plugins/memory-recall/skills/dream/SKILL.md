@@ -6,12 +6,13 @@ user-invocable: true
 
 # Dream: Memory Consolidation
 
-You are performing a dream -- a reflective pass over your memory files. Synthesize what you've learned recently into durable, well-organized memories so that future sessions can orient quickly.
+You are performing a dream -- a reflective pass over your memory files and instructions. Synthesize what you've learned recently into durable, well-organized memories so that future sessions can orient quickly.
 
-You have two memory directories:
+You manage three sources:
 
-- **Project memory**: Your per-project auto-memory directory (path in your system prompt's auto-memory section). Stores context specific to this project.
-- **Global memory**: `${CLAUDE_PLUGIN_DATA}/global-memory/`. Stores context that applies across all projects. Create this directory if it doesn't exist.
+- **Project memory**: Your per-project auto-memory directory (path in your system prompt's auto-memory section). Stores context specific to this project. You can read and write freely.
+- **Global memory**: `${CLAUDE_PLUGIN_DATA}/global-memory/`. Stores context that applies across all projects. Create this directory if it doesn't exist. You can read and write freely.
+- **Global instructions**: `~/.claude/CLAUDE.md`. The user's persistent directives. You can read freely, but MUST ask the user via AskUserQuestion before making any changes.
 
 Session transcripts are JSONL files in the project directory (large files -- grep narrowly, don't read whole files).
 
@@ -21,6 +22,7 @@ Session transcripts are JSONL files in the project directory (large files -- gre
 
 - `ls` both memory directories to see what already exists
 - Read both `MEMORY.md` indexes
+- Read `~/.claude/CLAUDE.md`
 - Skim existing topic files so you improve them rather than creating duplicates
 
 ## Phase 2 -- Gather recent signal
@@ -31,12 +33,12 @@ Look for new information worth persisting from the current project. Sources in r
 2. **Existing memories that drifted** -- facts that contradict something you see in the codebase now
 3. **Transcript search** -- grep the JSONL transcripts for narrow terms if you need specific context. Don't exhaustively read transcripts.
 
-## Phase 3 -- Consolidate
+## Phase 3 -- Consolidate memories
 
 For each thing worth remembering, decide where it belongs based on its **content**, not its type label:
 
-- **Project-bound**: references this project's specific files, architecture, bugs, decisions, or workflows → write to **project memory**
-- **General**: applies regardless of which project the user is in (personal preferences, coding style, communication style, tool preferences, broadly applicable lessons) → write to **global memory**
+- **Project-bound**: references this project's specific files, architecture, bugs, decisions, or workflows -> write to **project memory**
+- **General**: applies regardless of which project the user is in (personal preferences, coding style, communication style, tool preferences, broadly applicable lessons) -> write to **global memory**
 - **Ambiguous**: when in doubt, keep it in project memory. It can be promoted to global later.
 
 Use the memory file format (frontmatter with name/description/type) from your system prompt's auto-memory section.
@@ -47,9 +49,25 @@ Focus on:
 - Deleting contradicted facts at the source
 - If a piece of information already exists in global memory, don't duplicate it in project memory
 
-## Phase 4 -- Prune and index
+## Phase 4 -- Tidy CLAUDE.md (requires user approval)
 
-Update `MEMORY.md` in **both** directories. Each should stay under 200 lines and ~25KB. Each entry should be one line under ~150 characters: `- [Title](file.md) -- one-line hook`.
+Review `~/.claude/CLAUDE.md` for entries that are memory-like rather than instruction-like:
+
+- **Memory-like** (should move to global memory): learned facts about the user, past incidents, specific tool/library notes, reference pointers. These are context, not directives.
+- **Instruction-like** (should stay in CLAUDE.md): rules, prohibitions, required behaviors, output format requirements. These are directives.
+
+If you find entries that should move:
+1. Prepare a summary of proposed changes: which lines to move out, and where they would go in global memory
+2. Use **AskUserQuestion** to present the proposal and get approval
+3. Only after the user approves: create the global memory topic file, then remove the line from CLAUDE.md
+
+Also check the reverse: if global memory contains entries that are actually hard directives ("never do X", "always do Y"), propose moving them to CLAUDE.md via AskUserQuestion.
+
+**Never edit CLAUDE.md without asking first.**
+
+## Phase 5 -- Prune and index
+
+Update `MEMORY.md` in **both** memory directories. Each should stay under 200 lines and ~25KB. Each entry should be one line under ~150 characters: `- [Title](file.md) -- one-line hook`.
 
 - Remove stale or superseded pointers
 - Shorten verbose entries -- move detail into topic files
@@ -57,4 +75,4 @@ Update `MEMORY.md` in **both** directories. Each should stay under 200 lines and
 
 ---
 
-Return a brief summary of what you consolidated, updated, or pruned in each directory. If nothing changed, say so.
+Return a brief summary of what you consolidated, updated, or pruned in each location. If nothing changed, say so.
