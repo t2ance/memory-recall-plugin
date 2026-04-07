@@ -18,8 +18,9 @@ fi
 # Global memory directory (plugin data)
 global_mem_dir="${CLAUDE_PLUGIN_DATA:-$HOME/.claude/plugins/data/memory-recall}/global-memory"
 
-reminder="CRITICAL: Before responding, check your memory directories for relevant context. Read the MEMORY.md index in each directory and Read any topic files relevant to the user's query."
+reminder="CRITICAL: Before responding, check your memory and instructions for relevant context. Read the MEMORY.md index in each directory and Read any topic files relevant to the user's query. Also review ~/.claude/CLAUDE.md for global instructions that may apply."
 reminder="$reminder Project memory: $proj_mem_dir"
 reminder="$reminder Global memory: $global_mem_dir"
+reminder="$reminder Global instructions: $HOME/.claude/CLAUDE.md"
 
 printf '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"%s"}}' "$(echo "$reminder" | sed 's/"/\\"/g')"
