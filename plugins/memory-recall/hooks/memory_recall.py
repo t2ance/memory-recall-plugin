@@ -295,7 +295,7 @@ def main():
     # Log
     log_entry = {
         "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        "query": prompt[:200],
+        "query": prompt,
         "dimensions": {dim: backend for dim, backend, _ in tasks},
         "discovered": discovery_counts,
         "results": [summarize_result(dim, result) for dim, result in results],
