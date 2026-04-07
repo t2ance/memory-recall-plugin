@@ -40,6 +40,36 @@
       "description": "'off', 'reminder' (list all), 'agentic' (Haiku selects), or 'embedding' (vector match)",
       "default": "off"
     },
+    "memory_input": {
+      "type": "string",
+      "title": "Memory Input Granularity",
+      "description": "What Haiku sees: 'title_desc' (name+description) or 'full' (entire file content)",
+      "default": "title_desc"
+    },
+    "memory_output": {
+      "type": "string",
+      "title": "Memory Output Granularity",
+      "description": "What gets injected to main model: 'title_desc' or 'full' (entire file content)",
+      "default": "full"
+    },
+    "skills_output": {
+      "type": "string",
+      "title": "Skills Output Granularity",
+      "description": "What gets injected: 'title_desc' (name+reason) or 'full' (skill SKILL.md content)",
+      "default": "title_desc"
+    },
+    "tools_output": {
+      "type": "string",
+      "title": "Tools Output Granularity",
+      "description": "What gets injected: 'title_desc' (name+reason) or 'full' (not applicable for most tools)",
+      "default": "title_desc"
+    },
+    "agents_output": {
+      "type": "string",
+      "title": "Agents Output Granularity",
+      "description": "What gets injected: 'title_desc' (name+reason) or 'full' (agent markdown content)",
+      "default": "title_desc"
+    },
     "agentic_mode": {
       "type": "string",
       "title": "Agentic Mode",

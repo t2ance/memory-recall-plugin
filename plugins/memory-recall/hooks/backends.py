@@ -51,10 +51,11 @@ AGENTIC_SYSTEM_PROMPTS = {
 }
 
 
-async def recall_agentic(dim, resources, query, context, model):
+async def recall_agentic(dim, resources, query, context, model, input_granularity="title_desc"):
     """Use Agent SDK + Haiku to select relevant resources.
 
     Returns (result_dict, usage_dict) where usage_dict contains token counts and cost.
+    input_granularity: 'title_desc' (name+description) or 'full' (entire content for memory files).
     """
     if not resources:
         return None
@@ -63,10 +64,22 @@ async def recall_agentic(dim, resources, query, context, model):
     from claude_agent_sdk import ClaudeAgentOptions
     from claude_agent_sdk.types import AssistantMessage, ResultMessage
 
-    catalog = "\n".join(
-        f"- {r['name']}: {r['description']} [id={r['id']}]"
-        for r in resources
-    )
+    if input_granularity == "full" and dim == "memory":
+        lines = []
+        for r in resources:
+            path = r["id"]
+            if os.path.exists(path):
+                with open(path) as f:
+                    content = f.read()
+                lines.append(f"- [{r['name']}] {content[:500]} [id={r['id']}]")
+            else:
+                lines.append(f"- {r['name']}: {r['description']} [id={r['id']}]")
+        catalog = "\n".join(lines)
+    else:
+        catalog = "\n".join(
+            f"- {r['name']}: {r['description']} [id={r['id']}]"
+            for r in resources
+        )
     prompt_parts = [f"Catalog:\n{catalog}"]
     if context:
         prompt_parts.append(f"\nRecent conversation:\n{context}")

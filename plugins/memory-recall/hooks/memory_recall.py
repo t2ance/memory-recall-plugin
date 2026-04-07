@@ -53,6 +53,12 @@ def load_config():
         "agents": os.environ.get("CLAUDE_PLUGIN_OPTION_AGENTS", "off"),
         # Shared options
         "agentic_mode": os.environ.get("CLAUDE_PLUGIN_OPTION_AGENTIC_MODE", "parallel"),  # parallel | merged
+        # Per-dimension granularity
+        "memory_input": os.environ.get("CLAUDE_PLUGIN_OPTION_MEMORY_INPUT", "title_desc"),
+        "memory_output": os.environ.get("CLAUDE_PLUGIN_OPTION_MEMORY_OUTPUT", "full"),
+        "skills_output": os.environ.get("CLAUDE_PLUGIN_OPTION_SKILLS_OUTPUT", "title_desc"),
+        "tools_output": os.environ.get("CLAUDE_PLUGIN_OPTION_TOOLS_OUTPUT", "title_desc"),
+        "agents_output": os.environ.get("CLAUDE_PLUGIN_OPTION_AGENTS_OUTPUT", "title_desc"),
         "model": os.environ.get("CLAUDE_PLUGIN_OPTION_MODEL", "haiku"),
         "context_messages": int(os.environ.get("CLAUDE_PLUGIN_OPTION_CONTEXT_MESSAGES", "5")),
         "context_max_chars": int(os.environ.get("CLAUDE_PLUGIN_OPTION_CONTEXT_MAX_CHARS", "2000")),
@@ -87,7 +93,8 @@ async def dispatch_one(dim, backend, resources, query, context, config, memory_d
         result = recall_reminder(dim, resources)
 
     elif backend == "agentic":
-        result, usage = await recall_agentic(dim, resources, query, context, config["model"])
+        input_gran = config.get(f"{dim}_input", "title_desc")
+        result, usage = await recall_agentic(dim, resources, query, context, config["model"], input_gran)
 
     elif backend == "embedding":
         ensure_daemon_running(
@@ -157,8 +164,8 @@ async def run_all(tasks, query, context, config, memory_dirs):
 # ---------------------------------------------------------------------------
 
 
-def format_memory_result(result, proj_mem_dir, global_mem_dir, max_chars):
-    """Format memory recall result (file contents or reminder)."""
+def format_memory_result(result, proj_mem_dir, global_mem_dir, max_chars, output_granularity="full"):
+    """Format memory recall result."""
     if result is None:
         return None
     if isinstance(result, str):
@@ -169,19 +176,26 @@ def format_memory_result(result, proj_mem_dir, global_mem_dir, max_chars):
         for path in result["files"]:
             if not os.path.exists(path):
                 continue
-            with open(path) as f:
-                content = f.read()
-            if total + len(content) > max_chars:
-                break
-            parts.append(f"# Memory: {os.path.basename(path)}\n{content}")
-            total += len(content)
+            if output_granularity == "full":
+                with open(path) as f:
+                    content = f.read()
+                if total + len(content) > max_chars:
+                    break
+                parts.append(f"# Memory: {os.path.basename(path)}\n{content}")
+                total += len(content)
+            else:
+                # title_desc: only frontmatter name+description
+                from discover import _parse_frontmatter
+                fm = _parse_frontmatter(path)
+                line = f"- {fm.get('name', os.path.basename(path))}: {fm.get('description', '')} [{path}]"
+                parts.append(line)
         if not parts:
             return None
         return "\n\n".join(parts)
     return None
 
 
-def format_recommendation_result(result):
+def format_recommendation_result(result, output_granularity="title_desc"):
     """Format skill/tool/agent recommendations."""
     if result is None:
         return None
@@ -197,15 +211,21 @@ def format_recommendation_result(result):
     return None
 
 
-def merge_results(results, proj_mem_dir, global_mem_dir, max_chars):
+def merge_results(results, proj_mem_dir, global_mem_dir, max_chars, config=None):
     """Merge all dimension results into a single additionalContext string."""
+    config = config or {}
     sections = []
 
     for dim, result in results:
         if dim == "memory":
-            text = format_memory_result(result, proj_mem_dir, global_mem_dir, max_chars)
+            text = format_memory_result(
+                result, proj_mem_dir, global_mem_dir, max_chars,
+                config.get("memory_output", "full"),
+            )
         else:
-            text = format_recommendation_result(result)
+            text = format_recommendation_result(
+                result, config.get(f"{dim}_output", "title_desc"),
+            )
         if text:
             sections.append(text)
 
@@ -343,7 +363,7 @@ def main():
     t_elapsed = round(time.time() - t_start, 2)
 
     # Merge output
-    additional_context = merge_results(results, proj_mem_dir, global_mem_dir, config["max_content_chars"])
+    additional_context = merge_results(results, proj_mem_dir, global_mem_dir, config["max_content_chars"], config)
 
     # Compute totals
     total_input_tokens = sum(u.get("input_tokens", 0) for u in per_dim_usage.values())
