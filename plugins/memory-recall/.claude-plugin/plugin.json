@@ -40,6 +40,12 @@
       "description": "'off', 'reminder' (list all), 'agentic' (Haiku selects), or 'embedding' (vector match)",
       "default": "off"
     },
+    "agentic_mode": {
+      "type": "string",
+      "title": "Agentic Mode",
+      "description": "'parallel' (one Haiku call per dimension, better quality) or 'merged' (single call for all dimensions, faster ~5s vs ~20s)",
+      "default": "parallel"
+    },
     "model": {
       "type": "string",
       "title": "Agentic Model",

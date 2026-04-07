@@ -19,6 +19,7 @@ from backends import (
     ensure_daemon_running,
     extract_context,
     recall_agentic,
+    recall_agentic_merged,
     recall_embedding_generic,
     recall_embedding_memory,
     recall_reminder,
@@ -51,6 +52,7 @@ def load_config():
         "tools": os.environ.get("CLAUDE_PLUGIN_OPTION_TOOLS", "off"),
         "agents": os.environ.get("CLAUDE_PLUGIN_OPTION_AGENTS", "off"),
         # Shared options
+        "agentic_mode": os.environ.get("CLAUDE_PLUGIN_OPTION_AGENTIC_MODE", "parallel"),  # parallel | merged
         "model": os.environ.get("CLAUDE_PLUGIN_OPTION_MODEL", "haiku"),
         "context_messages": int(os.environ.get("CLAUDE_PLUGIN_OPTION_CONTEXT_MESSAGES", "5")),
         "context_max_chars": int(os.environ.get("CLAUDE_PLUGIN_OPTION_CONTEXT_MAX_CHARS", "2000")),
@@ -111,12 +113,43 @@ async def dispatch_one(dim, backend, resources, query, context, config, memory_d
 
 
 async def run_all(tasks, query, context, config, memory_dirs):
-    """Run all dimension recalls in parallel."""
-    coros = [
+    """Run all dimension recalls. Parallel or merged depending on agentic_mode."""
+    import time as _time
+
+    # Split tasks into agentic vs non-agentic
+    agentic_tasks = [(dim, resources) for dim, backend, resources in tasks if backend == "agentic"]
+    other_tasks = [(dim, backend, resources) for dim, backend, resources in tasks if backend != "agentic"]
+
+    use_merged = config.get("agentic_mode") == "merged" and len(agentic_tasks) >= 2
+
+    if use_merged and agentic_tasks:
+        # Single Haiku call for all agentic dimensions
+        t0 = _time.time()
+        merged_results = await recall_agentic_merged(
+            agentic_tasks, query, context, config["model"]
+        )
+        elapsed = round(_time.time() - t0, 2)
+        # Convert to standard (dim, result, elapsed, usage) tuples
+        agentic_tuples = []
+        for dim, _ in agentic_tasks:
+            result, usage = merged_results.get(dim, (None, {}))
+            agentic_tuples.append((dim, result, elapsed, usage))
+    else:
+        # Parallel: one Haiku call per dimension (existing behavior)
+        agentic_coros = [
+            dispatch_one(dim, "agentic", resources, query, context, config, memory_dirs)
+            for dim, resources in agentic_tasks
+        ]
+        agentic_tuples = list(await asyncio.gather(*agentic_coros)) if agentic_coros else []
+
+    # Run non-agentic tasks (reminder/embedding) in parallel
+    other_coros = [
         dispatch_one(dim, backend, resources, query, context, config, memory_dirs)
-        for dim, backend, resources in tasks
+        for dim, backend, resources in other_tasks
     ]
-    return await asyncio.gather(*coros)
+    other_tuples = list(await asyncio.gather(*other_coros)) if other_coros else []
+
+    return agentic_tuples + other_tuples
 
 
 # ---------------------------------------------------------------------------

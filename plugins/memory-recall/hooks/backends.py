@@ -118,6 +118,94 @@ async def recall_agentic(dim, resources, query, context, model):
         return {"type": "recommendations", "dim": dim, "items": items}, usage
 
 
+# -- Agentic merged (single call for all dimensions) -------------------------
+
+
+MERGED_SYSTEM_PROMPT = (
+    "You are a context recommender. Given multiple catalogs and a query, "
+    "select the most relevant items from EACH catalog independently.\n"
+    "Return ONLY a JSON object with one key per catalog:\n"
+    '{"memory": {"files": ["id1", ...]}, '
+    '"skills": {"items": [{"name": "...", "reason": "..."}]}, '
+    '"tools": {"items": [{"name": "...", "reason": "..."}]}, '
+    '"agents": {"items": [{"name": "...", "reason": "..."}]}}\n'
+    "Only include catalogs that were provided. Select 0-3 items per catalog. "
+    "No explanation outside the JSON."
+)
+
+
+async def recall_agentic_merged(dim_resources, query, context, model):
+    """Single Haiku call for all dimensions. Returns {dim: (result, usage)}.
+
+    dim_resources: [(dim, resources), ...] for each enabled agentic dimension.
+    """
+    from claude_agent_sdk import query as sdk_query
+    from claude_agent_sdk import ClaudeAgentOptions
+    from claude_agent_sdk.types import AssistantMessage, ResultMessage
+
+    # Build one prompt with all catalogs
+    sections = []
+    for dim, resources in dim_resources:
+        catalog = "\n".join(
+            f"- {r['name']}: {r['description']} [id={r['id']}]"
+            for r in resources
+        )
+        limit = "0-3 files" if dim == "memory" else "0-3 items"
+        sections.append(f"## {dim} catalog ({limit}):\n{catalog}")
+
+    prompt_parts = ["\n\n".join(sections)]
+    if context:
+        prompt_parts.append(f"\nRecent conversation:\n{context}")
+    prompt_parts.append(f"\nQuery: {query}")
+    agentic_prompt = "\n".join(prompt_parts)
+
+    options = ClaudeAgentOptions(
+        system_prompt=MERGED_SYSTEM_PROMPT,
+        model=model,
+        tools=[],
+        settings='{"disableAllHooks": true}',
+        env={"CLAUDECODE": "", "CLAUDE_AGENT_SDK_SKIP_VERSION_CHECK": "1"},
+        effort="low",
+        max_budget_usd=0.02,
+        extra_args={"no-session-persistence": None},
+    )
+
+    result_text = ""
+    usage = {}
+    async for msg in sdk_query(prompt=agentic_prompt, options=options):
+        if isinstance(msg, AssistantMessage):
+            for block in msg.content:
+                if hasattr(block, "text"):
+                    result_text += block.text
+        elif isinstance(msg, ResultMessage):
+            usage = {
+                "input_tokens": msg.usage.get("input_tokens", 0) if msg.usage else 0,
+                "output_tokens": msg.usage.get("output_tokens", 0) if msg.usage else 0,
+                "cost_usd": msg.total_cost_usd or 0,
+                "duration_api_ms": msg.duration_api_ms,
+            }
+
+    assert result_text, "Empty response from merged agentic recall"
+
+    clean = re.sub(r"```json?\s*", "", result_text)
+    clean = re.sub(r"```", "", clean).strip()
+    decoder = json.JSONDecoder()
+    parsed, _ = decoder.raw_decode(clean)
+
+    # Parse per-dimension results
+    results = {}
+    for dim, _ in dim_resources:
+        dim_data = parsed.get(dim, {})
+        if dim == "memory":
+            files = dim_data.get("files", [])
+            results[dim] = ({"type": "memory_files", "files": files} if files else None, usage)
+        else:
+            items = dim_data.get("items", [])
+            results[dim] = ({"type": "recommendations", "dim": dim, "items": items} if items else None, usage)
+
+    return results
+
+
 # -- Embedding ----------------------------------------------------------------
 
 
