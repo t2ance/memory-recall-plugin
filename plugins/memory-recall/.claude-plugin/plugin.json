@@ -1,7 +1,7 @@
 {
   "name": "memory-recall",
-  "version": "1.0.0",
-  "description": "Forces Claude to check memory files before responding. Injects a reminder with available topic files on every user prompt.",
+  "version": "2.0.0",
+  "description": "Smart memory recall with three backends: path reminder, agentic search (Haiku), or embedding RAG. Automatically injects relevant memory content on every user prompt.",
   "author": {
     "name": "peijia"
   },
@@ -9,6 +9,37 @@
     "memory",
     "recall",
     "context",
-    "compliance"
-  ]
+    "rag",
+    "agentic"
+  ],
+  "userConfig": {
+    "backend": {
+      "type": "string",
+      "title": "Search Backend",
+      "description": "Which backend to use: 'reminder' (just paths), 'agentic' (Haiku selects files), or 'embedding' (local RAG daemon)",
+      "default": "reminder"
+    },
+    "model": {
+      "type": "string",
+      "title": "Agentic Model",
+      "description": "Model for agentic backend (haiku/sonnet/opus)",
+      "default": "haiku"
+    },
+    "context_messages": {
+      "type": "number",
+      "title": "Context Messages",
+      "description": "Number of recent conversation messages to include for search context",
+      "default": 5,
+      "min": 0,
+      "max": 20
+    },
+    "context_max_chars": {
+      "type": "number",
+      "title": "Context Max Chars",
+      "description": "Maximum characters of conversation context to send",
+      "default": 2000,
+      "min": 0,
+      "max": 10000
+    }
+  }
 }

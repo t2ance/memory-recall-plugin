@@ -5,8 +5,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/memory-recall-reminder.sh\"",
-            "timeout": 10
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/memory_recall.py\"",
+            "timeout": 15
           }
         ]
       }
