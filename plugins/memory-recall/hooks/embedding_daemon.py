@@ -166,11 +166,13 @@ class EmbeddingDaemon:
                 request.get("threshold", 0.85),
             )
             response = {"status": "ok", "results": results}
+            conn.sendall(json.dumps(response).encode())
+        except BrokenPipeError:
+            log.warning("Client disconnected before response was sent")
         except Exception as e:
             log.exception("Error handling request")
             response = {"status": "error", "error": str(e)}
-
-        conn.sendall(json.dumps(response).encode())
+            conn.sendall(json.dumps(response).encode())
 
     # ---- lifecycle ----
 
@@ -242,6 +244,8 @@ class EmbeddingDaemon:
                         conn.close()
                 except socket.timeout:
                     continue
+                except OSError as e:
+                    log.warning("Connection error (daemon continues): %s", e)
         finally:
             server.close()
             self._cleanup()
