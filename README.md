@@ -37,13 +37,25 @@ Then configure via `/setup` or manually in `~/.claude/settings.json`:
 
 Each dimension accepts: `"off"`, `"reminder"`, `"agentic"`, or `"embedding"`.
 
+### Additional options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `agentic_mode` | `parallel` (one call/dim) or `merged` (single call) | `parallel` |
+| `{dim}_input` | What selector sees: `title_desc` or `full` | `title_desc` |
+| `{dim}_output` | What gets injected: `title_desc` or `full` | `full` (memory), `title_desc` (others) |
+| `max_content_chars` | Global cap on total injected content | `9000` |
+| `model` | Agentic model: `haiku` / `sonnet` / `opus` | `haiku` |
+
 ## How It Works
 
-On every `UserPromptSubmit`, the hook:
+On every `UserPromptSubmit` and `SubagentStart`, the hook:
 
 1. **Discovers** available resources per enabled dimension (file scan + hardcoded fallback)
 2. **Recalls** relevant items using the configured backend (parallel for agentic)
 3. **Injects** results as `additionalContext` into the model's context
+
+Sub-agents and teammates also receive recall context. On `SubagentStart`, the hook extracts the parent agent's prompt from the transcript and runs the full recall pipeline.
 
 ### Backends
 
@@ -113,7 +125,7 @@ hooks/
   backends.py           # 3 generic recall implementations
   constants.py          # Hardcoded built-in skills, deferred tools, agent types
   embedding_daemon.py   # Local RAG daemon (sentence-transformers)
-  hooks.json            # Hook registration (UserPromptSubmit, 30s timeout)
+  hooks.json            # Hook registration (UserPromptSubmit 30s, SubagentStart 60s)
 skills/
   dream/SKILL.md        # Memory consolidation
   remember/SKILL.md     # Quick save

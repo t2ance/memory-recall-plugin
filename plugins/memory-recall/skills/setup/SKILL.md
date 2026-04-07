@@ -60,6 +60,17 @@ Recommend starting with `memory: agentic` and one or two other dimensions on `ag
 
 **If any dimension uses `agentic`:**
 - `model`: Which model? Options: `haiku` (fast/cheap, recommended), `sonnet` (smarter but costlier). Default: `haiku`.
+- `agentic_mode`: `parallel` (one Haiku call per dimension, better quality) or `merged` (single call for all, faster). Default: `parallel`.
+
+**Per-dimension granularity (ask if user wants fine-grained control):**
+
+Each dimension has independent input and output granularity:
+- `{dim}_input`: What the selection backend sees. `title_desc` (name+description) or `full` (file content). Default: `title_desc`.
+- `{dim}_output`: What gets injected into main model. `title_desc` or `full` (file content). Default: `full` for memory, `title_desc` for others.
+
+All 8 configs: `memory_input`, `memory_output`, `skills_input`, `skills_output`, `tools_input`, `tools_output`, `agents_input`, `agents_output`.
+
+Note: `reminder` backend ignores `input` (it returns everything, no selection step). `embedding` memory ignores `input` (daemon always searches file content).
 
 **If any dimension uses `embedding`:**
 - `embedding_model`: HuggingFace model name. Default: `intfloat/multilingual-e5-small`.
@@ -71,7 +82,7 @@ Recommend starting with `memory: agentic` and one or two other dimensions on `ag
 **Shared options (ask for any non-off dimension):**
 - `context_messages`: Recent conversation messages for search context (0-20). Default: `5`.
 - `context_max_chars`: Max chars of context (0-10000). Default: `2000`.
-- `max_content_chars`: Max total chars of injected memory content (1000-10000). Default: `9000`.
+- `max_content_chars`: Global cap on total injected content across all dimensions (1000-10000). Default: `9000`.
 
 Only ask about options the user wants to customize. Defaults are fine for most users.
 
