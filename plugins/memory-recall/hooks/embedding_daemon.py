@@ -28,6 +28,8 @@ LOG_FILE = os.path.join(DATA_DIR, "daemon.log")
 
 MODEL_NAME = os.environ.get("EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
 DEVICE = os.environ.get("EMBEDDING_DEVICE", "cpu")
+DEFAULT_TOP_K = int(os.environ.get("EMBEDDING_TOP_K", "3"))
+DEFAULT_THRESHOLD = float(os.environ.get("EMBEDDING_THRESHOLD", "0.85"))
 IDLE_TIMEOUT = 0  # 0 = no idle timeout, daemon runs until killed
 MAX_MSG_SIZE = 2 * 1024 * 1024  # 2MB
 
@@ -99,26 +101,24 @@ class EmbeddingDaemon:
 
         if to_embed:
             texts = []
-            valid_paths = []
             for path in to_embed:
                 with open(path) as f:
                     content = f.read()
                 texts.append(f"passage: {content}")
-                valid_paths.append(path)
 
             vectors = self.model.encode(texts, normalize_embeddings=True)
-            for i, path in enumerate(valid_paths):
+            for i, path in enumerate(to_embed):
                 self.embeddings[path] = vectors[i]
                 self.manifest[path] = current_files[path]
 
-            log.info("Embedded %d files", len(valid_paths))
+            log.info("Embedded %d files", len(to_embed))
 
         if to_embed or deleted:
             self.save_cache()
 
     # ---- search ----
 
-    def search(self, query, memory_dirs, top_k=3, threshold=0.85):
+    def search(self, query, memory_dirs, top_k=DEFAULT_TOP_K, threshold=DEFAULT_THRESHOLD):
         self.update_cache(memory_dirs)
 
         if not self.embeddings:
@@ -163,8 +163,8 @@ class EmbeddingDaemon:
             results = self.search(
                 request["query"],
                 request["memory_dirs"],
-                request.get("top_k", 3),
-                request.get("threshold", 0.85),
+                request.get("top_k", DEFAULT_TOP_K),
+                request.get("threshold", DEFAULT_THRESHOLD),
             )
             response = {"status": "ok", "results": results}
             conn.sendall(json.dumps(response).encode())
@@ -225,7 +225,8 @@ class EmbeddingDaemon:
         server.listen(5)
         server.settimeout(1.0)
 
-        threading.Thread(target=self._idle_checker, daemon=True).start()
+        if IDLE_TIMEOUT > 0:
+            threading.Thread(target=self._idle_checker, daemon=True).start()
 
         def shutdown(signum, frame):
             self.running = False

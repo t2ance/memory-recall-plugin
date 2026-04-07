@@ -64,6 +64,13 @@ def output_memory_content(parts, proj_mem_dir, global_mem_dir):
     )
 
 
+def output_no_results(backend_name, proj_mem_dir, global_mem_dir):
+    output_hook(
+        f"NOTE: {backend_name} search ran but found no relevant memories.\n\n"
+        + build_reminder_text(proj_mem_dir, global_mem_dir)
+    )
+
+
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
@@ -241,8 +248,7 @@ def run_agentic(proj_mem_dir, global_mem_dir, prompt, transcript_path):
 
     files = parsed["files"]
     if not files:
-        note = "NOTE: agentic search ran but found no relevant memories.\n\n"
-        output_hook(note + build_reminder_text(proj_mem_dir, global_mem_dir))
+        output_no_results("agentic", proj_mem_dir, global_mem_dir)
         return
 
     read_and_format_files(files, proj_mem_dir, global_mem_dir)
@@ -314,11 +320,16 @@ def run_embedding(proj_mem_dir, global_mem_dir, prompt, transcript_path):
 
     results = response["results"]
     if not results:
-        note = "NOTE: embedding search ran but found no relevant memories.\n\n"
-        output_hook(note + build_reminder_text(proj_mem_dir, global_mem_dir))
+        output_no_results("embedding", proj_mem_dir, global_mem_dir)
         return
 
-    parts = [f"# Memory: {os.path.basename(r['path'])}\n{r['content']}" for r in results]
+    parts = []
+    total_chars = 0
+    for r in results:
+        if total_chars + len(r["content"]) > MAX_CONTENT_CHARS:
+            break
+        parts.append(f"# Memory: {os.path.basename(r['path'])}\n{r['content']}")
+        total_chars += len(r["content"])
     output_memory_content(parts, proj_mem_dir, global_mem_dir)
 
 
