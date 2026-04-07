@@ -103,7 +103,8 @@ async def recall_agentic(dim, resources, query, context, model):
 
     clean = re.sub(r"```json?\s*", "", result_text)
     clean = re.sub(r"```", "", clean).strip()
-    parsed = json.loads(clean)
+    decoder = json.JSONDecoder()
+    parsed, _ = decoder.raw_decode(clean)
 
     if dim == "memory":
         files = parsed.get("files", [])
