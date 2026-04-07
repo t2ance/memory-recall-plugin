@@ -6,12 +6,11 @@ Backends (configured via plugin option CLAUDE_PLUGIN_OPTION_BACKEND):
   agentic   -- Agent SDK + Haiku selects files, inject content (~$0.003/query)
   embedding -- local RAG daemon selects files, inject content (zero-cost after setup)
 
-Agentic/embedding fall back to reminder on failure, with a warning injected.
+Errors crash the hook visibly (CC shows "hook error" to user).
 """
 
 import json
 import os
-import re
 import socket
 import subprocess
 import sys
@@ -49,13 +48,20 @@ SOCKET_PATH = os.path.join(DATA_DIR, "daemon.sock")
 
 
 def output_hook(additional_context):
-    """Write hook response JSON to stdout."""
     print(json.dumps({
         "hookSpecificOutput": {
             "hookEventName": "UserPromptSubmit",
             "additionalContext": additional_context,
         }
     }))
+
+
+def output_memory_content(parts, proj_mem_dir, global_mem_dir):
+    output_hook(
+        "As you answer the user's questions, you can use the following context:\n"
+        + "\n\n".join(parts)
+        + f"\n\nProject memory: {proj_mem_dir}\nGlobal memory: {global_mem_dir}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -88,7 +94,6 @@ def build_reminder_text(proj_mem_dir, global_mem_dir):
 
 
 def parse_frontmatter(path):
-    """Parse YAML frontmatter from a markdown file (simple key: value)."""
     with open(path) as f:
         content = f.read(2000)
     if not content.startswith("---"):
@@ -105,7 +110,6 @@ def parse_frontmatter(path):
 
 
 def build_manifest(proj_mem_dir, global_mem_dir):
-    """Build frontmatter manifest of all memory files."""
     entries = []
     for mem_dir in [proj_mem_dir, global_mem_dir]:
         if not os.path.isdir(mem_dir):
@@ -115,15 +119,11 @@ def build_manifest(proj_mem_dir, global_mem_dir):
                 continue
             path = os.path.join(mem_dir, fname)
             fm = parse_frontmatter(path)
-            name = fm.get("name", fname)
-            desc = fm.get("description", "")
-            ftype = fm.get("type", "unknown")
-            entries.append(f"- {name} ({ftype}): {desc} [{path}]")
+            entries.append(f"- {fm.get('name', fname)} ({fm.get('type', 'unknown')}): {fm.get('description', '')} [{path}]")
     return "\n".join(entries)
 
 
 def extract_context(transcript_path):
-    """Extract recent conversation context from transcript JSONL."""
     if not transcript_path or not os.path.exists(transcript_path):
         return ""
     result = subprocess.run(
@@ -142,12 +142,11 @@ def extract_context(transcript_path):
             continue
         content = msg.get("content", "")
         if isinstance(content, list):
-            text_parts = [
+            content = " ".join(
                 b.get("text", "")
                 for b in content
                 if isinstance(b, dict) and b.get("type") == "text"
-            ]
-            content = " ".join(text_parts)
+            )
         if not isinstance(content, str):
             continue
         messages.append(f"{role}: {content[:500]}")
@@ -159,8 +158,7 @@ def extract_context(transcript_path):
     return context
 
 
-def inject_file_contents(file_paths, proj_mem_dir, global_mem_dir):
-    """Read selected files and output as additionalContext."""
+def read_and_format_files(file_paths, proj_mem_dir, global_mem_dir):
     parts = []
     total_chars = 0
     for path in file_paths:
@@ -175,13 +173,7 @@ def inject_file_contents(file_paths, proj_mem_dir, global_mem_dir):
     if not parts:
         output_hook(build_reminder_text(proj_mem_dir, global_mem_dir))
         return
-    memory_content = "\n\n".join(parts)
-    output_hook(
-        f"As you answer the user's questions, you can use the following context:\n"
-        f"{memory_content}\n\n"
-        f"Project memory: {proj_mem_dir}\n"
-        f"Global memory: {global_mem_dir}"
-    )
+    output_memory_content(parts, proj_mem_dir, global_mem_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -200,6 +192,7 @@ def run_reminder(proj_mem_dir, global_mem_dir):
 
 def run_agentic(proj_mem_dir, global_mem_dir, prompt, transcript_path):
     import asyncio
+    import re
     from claude_agent_sdk import query as sdk_query
     from claude_agent_sdk import ClaudeAgentOptions
     from claude_agent_sdk.types import AssistantMessage
@@ -242,7 +235,6 @@ def run_agentic(proj_mem_dir, global_mem_dir, prompt, transcript_path):
     asyncio.run(_run())
     assert result_text, "Empty response from agentic search"
 
-    # Parse JSON (may be wrapped in markdown fences)
     clean = re.sub(r"```json?\s*", "", result_text)
     clean = re.sub(r"```", "", clean).strip()
     parsed = json.loads(clean)
@@ -253,7 +245,7 @@ def run_agentic(proj_mem_dir, global_mem_dir, prompt, transcript_path):
         output_hook(note + build_reminder_text(proj_mem_dir, global_mem_dir))
         return
 
-    inject_file_contents(files, proj_mem_dir, global_mem_dir)
+    read_and_format_files(files, proj_mem_dir, global_mem_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -262,58 +254,56 @@ def run_agentic(proj_mem_dir, global_mem_dir, prompt, transcript_path):
 
 
 def query_daemon(query_text, memory_dirs, top_k=EMBEDDING_TOP_K, threshold=EMBEDDING_THRESHOLD):
-    """Send query to embedding daemon via unix socket."""
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sock.settimeout(3.0)
-    sock.connect(SOCKET_PATH)
-    request = json.dumps({
-        "query": query_text,
-        "memory_dirs": memory_dirs,
-        "top_k": top_k,
-        "threshold": threshold,
-    }).encode()
-    sock.sendall(request)
-    sock.shutdown(socket.SHUT_WR)
-    data = b""
-    while True:
-        chunk = sock.recv(4096)
-        if not chunk:
-            break
-        data += chunk
-    sock.close()
+    try:
+        sock.connect(SOCKET_PATH)
+        sock.sendall(json.dumps({
+            "query": query_text,
+            "memory_dirs": memory_dirs,
+            "top_k": top_k,
+            "threshold": threshold,
+        }).encode())
+        sock.shutdown(socket.SHUT_WR)
+        data = b""
+        while True:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            data += chunk
+    finally:
+        sock.close()
     return json.loads(data.decode())
 
 
 def ensure_daemon_running():
-    """Start embedding daemon in background if not running."""
     if os.path.exists(SOCKET_PATH):
-        return  # socket exists, daemon likely running
+        return
     daemon_script = os.path.join(PLUGIN_ROOT, "hooks", "embedding_daemon.py")
     assert os.path.isfile(EMBEDDING_PYTHON), f"Daemon python not found: {EMBEDDING_PYTHON}"
     assert os.path.isfile(daemon_script), f"Daemon script not found: {daemon_script}"
-    log_file = os.path.join(DATA_DIR, "daemon.log")
     os.makedirs(DATA_DIR, exist_ok=True)
+    log_handle = open(os.path.join(DATA_DIR, "daemon.log"), "a")
     env = os.environ.copy()
     env["EMBEDDING_MODEL"] = EMBEDDING_MODEL
     env["EMBEDDING_DEVICE"] = EMBEDDING_DEVICE
     subprocess.Popen(
         [EMBEDDING_PYTHON, daemon_script],
         env=env,
-        stdout=open(log_file, "a"),
+        stdout=log_handle,
         stderr=subprocess.STDOUT,
         start_new_session=True,
     )
+    log_handle.close()
 
 
 def run_embedding(proj_mem_dir, global_mem_dir, prompt, transcript_path):
     memory_dirs = [d for d in [proj_mem_dir, global_mem_dir] if os.path.isdir(d)]
     assert memory_dirs, "No memory directories exist"
 
-    # Build context-aware query (same as client.py)
     context_parts = []
     context = extract_context(transcript_path)
     if context:
-        # Flatten context lines into a single string for embedding
         context_parts.append(context.replace("\n", " "))
     context_parts.append(prompt)
     query_text = " ".join(context_parts)
@@ -328,18 +318,8 @@ def run_embedding(proj_mem_dir, global_mem_dir, prompt, transcript_path):
         output_hook(note + build_reminder_text(proj_mem_dir, global_mem_dir))
         return
 
-    # Inject file contents from daemon results
-    parts = []
-    for r in results:
-        fname = os.path.basename(r["path"])
-        parts.append(f"# Memory: {fname}\n{r['content']}")
-    memory_content = "\n\n".join(parts)
-    output_hook(
-        f"As you answer the user's questions, you can use the following context:\n"
-        f"{memory_content}\n\n"
-        f"Project memory: {proj_mem_dir}\n"
-        f"Global memory: {global_mem_dir}"
-    )
+    parts = [f"# Memory: {os.path.basename(r['path'])}\n{r['content']}" for r in results]
+    output_memory_content(parts, proj_mem_dir, global_mem_dir)
 
 
 # ---------------------------------------------------------------------------
