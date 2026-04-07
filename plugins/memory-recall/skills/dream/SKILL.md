@@ -8,43 +8,53 @@ user-invocable: true
 
 You are performing a dream -- a reflective pass over your memory files. Synthesize what you've learned recently into durable, well-organized memories so that future sessions can orient quickly.
 
-Your memory directory path is in the auto memory section of your system prompt. Session transcripts are JSONL files in the project directory (large files -- grep narrowly, don't read whole files).
+You have two memory directories:
+
+- **Project memory**: Your per-project auto-memory directory (path in your system prompt's auto-memory section). Stores context specific to this project.
+- **Global memory**: `${CLAUDE_PLUGIN_DATA}/global-memory/`. Stores context that applies across all projects. Create this directory if it doesn't exist.
+
+Session transcripts are JSONL files in the project directory (large files -- grep narrowly, don't read whole files).
 
 ---
 
 ## Phase 1 -- Orient
 
-- `ls` the memory directory to see what already exists
-- Read `MEMORY.md` to understand the current index
+- `ls` both memory directories to see what already exists
+- Read both `MEMORY.md` indexes
 - Skim existing topic files so you improve them rather than creating duplicates
-- If `logs/` or `sessions/` subdirectories exist, review recent entries there
 
 ## Phase 2 -- Gather recent signal
 
-Look for new information worth persisting. Sources in rough priority order:
+Look for new information worth persisting from the current project. Sources in rough priority order:
 
-1. **Daily logs** (`logs/YYYY/MM/YYYY-MM-DD.md`) if present -- these are the append-only stream
+1. **Daily logs** (`logs/YYYY/MM/YYYY-MM-DD.md`) if present
 2. **Existing memories that drifted** -- facts that contradict something you see in the codebase now
-3. **Transcript search** -- if you need specific context (e.g., "what was the error message from yesterday's build failure?"), grep the JSONL transcripts for narrow terms. Don't exhaustively read transcripts. Look only for things you already suspect matter.
+3. **Transcript search** -- grep the JSONL transcripts for narrow terms if you need specific context. Don't exhaustively read transcripts.
 
 ## Phase 3 -- Consolidate
 
-For each thing worth remembering, write or update a memory file at the top level of the memory directory. Use the memory file format and type conventions from your system prompt's auto-memory section -- it's the source of truth for what to save, how to structure it, and what NOT to save.
+For each thing worth remembering, decide where it belongs based on its **content**, not its type label:
+
+- **Project-bound**: references this project's specific files, architecture, bugs, decisions, or workflows → write to **project memory**
+- **General**: applies regardless of which project the user is in (personal preferences, coding style, communication style, tool preferences, broadly applicable lessons) → write to **global memory**
+- **Ambiguous**: when in doubt, keep it in project memory. It can be promoted to global later.
+
+Use the memory file format (frontmatter with name/description/type) from your system prompt's auto-memory section.
 
 Focus on:
 - Merging new signal into existing topic files rather than creating near-duplicates
-- Converting relative dates ("yesterday", "last week") to absolute dates so they remain interpretable after time passes
-- Deleting contradicted facts -- if today's investigation disproves an old memory, fix it at the source
+- Converting relative dates to absolute dates
+- Deleting contradicted facts at the source
+- If a piece of information already exists in global memory, don't duplicate it in project memory
 
 ## Phase 4 -- Prune and index
 
-Update `MEMORY.md` so it stays under 200 lines AND under ~25KB. It's an **index**, not a dump -- each entry should be one line under ~150 characters: `- [Title](file.md) -- one-line hook`. Never write memory content directly into it.
+Update `MEMORY.md` in **both** directories. Each should stay under 200 lines and ~25KB. Each entry should be one line under ~150 characters: `- [Title](file.md) -- one-line hook`.
 
-- Remove pointers to memories that are now stale, wrong, or superseded
-- Demote verbose entries: if an index line is over ~200 chars, it's carrying content that belongs in the topic file -- shorten the line, move the detail
-- Add pointers to newly important memories
-- Resolve contradictions -- if two files disagree, fix the wrong one
+- Remove stale or superseded pointers
+- Shorten verbose entries -- move detail into topic files
+- Resolve contradictions between files
 
 ---
 
-Return a brief summary of what you consolidated, updated, or pruned. If nothing changed (memories are already tight), say so.
+Return a brief summary of what you consolidated, updated, or pruned in each directory. If nothing changed, say so.
