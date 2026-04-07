@@ -25,6 +25,13 @@ MODEL = os.environ.get("CLAUDE_PLUGIN_OPTION_MODEL", "haiku")
 CONTEXT_MESSAGES = int(os.environ.get("CLAUDE_PLUGIN_OPTION_CONTEXT_MESSAGES", "5"))
 CONTEXT_MAX_CHARS = int(os.environ.get("CLAUDE_PLUGIN_OPTION_CONTEXT_MAX_CHARS", "2000"))
 
+EMBEDDING_MODEL = os.environ.get("CLAUDE_PLUGIN_OPTION_EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
+EMBEDDING_PYTHON = os.path.expanduser(os.environ.get("CLAUDE_PLUGIN_OPTION_EMBEDDING_PYTHON", "~/miniconda3/envs/memory-recall/bin/python"))
+EMBEDDING_THRESHOLD = float(os.environ.get("CLAUDE_PLUGIN_OPTION_EMBEDDING_THRESHOLD", "0.85"))
+EMBEDDING_TOP_K = int(os.environ.get("CLAUDE_PLUGIN_OPTION_EMBEDDING_TOP_K", "3"))
+EMBEDDING_DEVICE = os.environ.get("CLAUDE_PLUGIN_OPTION_EMBEDDING_DEVICE", "cpu")
+MAX_CONTENT_CHARS = int(os.environ.get("CLAUDE_PLUGIN_OPTION_MAX_CONTENT_CHARS", "9000"))
+
 HOME = os.path.expanduser("~")
 DATA_DIR = os.environ.get(
     "CLAUDE_PLUGIN_DATA",
@@ -35,7 +42,6 @@ PLUGIN_ROOT = os.environ.get(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
 )
 SOCKET_PATH = os.path.join(DATA_DIR, "daemon.sock")
-DAEMON_PYTHON = os.path.join(HOME, "miniconda3/envs/memory-recall/bin/python")
 
 # ---------------------------------------------------------------------------
 # Hook I/O
@@ -162,7 +168,7 @@ def inject_file_contents(file_paths, proj_mem_dir, global_mem_dir):
             continue
         with open(path) as f:
             content = f.read()
-        if total_chars + len(content) > 9000:
+        if total_chars + len(content) > MAX_CONTENT_CHARS:
             break
         parts.append(f"# Memory: {os.path.basename(path)}\n{content}")
         total_chars += len(content)
@@ -254,7 +260,7 @@ def run_agentic(proj_mem_dir, global_mem_dir, prompt, transcript_path):
 # ---------------------------------------------------------------------------
 
 
-def query_daemon(query_text, memory_dirs, top_k=3, threshold=0.85):
+def query_daemon(query_text, memory_dirs, top_k=EMBEDDING_TOP_K, threshold=EMBEDDING_THRESHOLD):
     """Send query to embedding daemon via unix socket."""
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     sock.settimeout(3.0)
@@ -282,12 +288,16 @@ def ensure_daemon_running():
     if os.path.exists(SOCKET_PATH):
         return  # socket exists, daemon likely running
     daemon_script = os.path.join(PLUGIN_ROOT, "hooks", "embedding_daemon.py")
-    assert os.path.isfile(DAEMON_PYTHON), f"Daemon python not found: {DAEMON_PYTHON}"
+    assert os.path.isfile(EMBEDDING_PYTHON), f"Daemon python not found: {EMBEDDING_PYTHON}"
     assert os.path.isfile(daemon_script), f"Daemon script not found: {daemon_script}"
     log_file = os.path.join(DATA_DIR, "daemon.log")
     os.makedirs(DATA_DIR, exist_ok=True)
+    env = os.environ.copy()
+    env["EMBEDDING_MODEL"] = EMBEDDING_MODEL
+    env["EMBEDDING_DEVICE"] = EMBEDDING_DEVICE
     subprocess.Popen(
-        [DAEMON_PYTHON, daemon_script],
+        [EMBEDDING_PYTHON, daemon_script],
+        env=env,
         stdout=open(log_file, "a"),
         stderr=subprocess.STDOUT,
         start_new_session=True,

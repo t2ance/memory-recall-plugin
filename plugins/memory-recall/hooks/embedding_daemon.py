@@ -26,7 +26,8 @@ CACHE_DIR = os.path.join(DATA_DIR, "cache")
 PID_FILE = os.path.join(DATA_DIR, "daemon.pid")
 LOG_FILE = os.path.join(DATA_DIR, "daemon.log")
 
-MODEL_NAME = "intfloat/multilingual-e5-small"
+MODEL_NAME = os.environ.get("EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
+DEVICE = os.environ.get("EMBEDDING_DEVICE", "cpu")
 IDLE_TIMEOUT = 0  # 0 = no idle timeout, daemon runs until killed
 MAX_MSG_SIZE = 2 * 1024 * 1024  # 2MB
 
@@ -49,8 +50,8 @@ class EmbeddingDaemon:
     # ---- model & cache ----
 
     def load_model(self):
-        log.info("Loading model %s on CPU", MODEL_NAME)
-        self.model = SentenceTransformer(MODEL_NAME, device="cpu")
+        log.info("Loading model %s on %s", MODEL_NAME, DEVICE)
+        self.model = SentenceTransformer(MODEL_NAME, device=DEVICE)
         log.info("Model loaded")
 
     def load_cache(self):

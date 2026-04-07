@@ -40,6 +40,48 @@
       "default": 2000,
       "min": 0,
       "max": 10000
+    },
+    "embedding_model": {
+      "type": "string",
+      "title": "Embedding Model",
+      "description": "HuggingFace model name for embedding backend",
+      "default": "intfloat/multilingual-e5-small"
+    },
+    "embedding_python": {
+      "type": "string",
+      "title": "Embedding Python Path",
+      "description": "Path to Python with sentence-transformers installed",
+      "default": "~/miniconda3/envs/memory-recall/bin/python"
+    },
+    "embedding_threshold": {
+      "type": "number",
+      "title": "Embedding Threshold",
+      "description": "Cosine similarity threshold; below this falls back to reminder",
+      "default": 0.85,
+      "min": 0,
+      "max": 1
+    },
+    "embedding_top_k": {
+      "type": "number",
+      "title": "Embedding Top K",
+      "description": "Maximum number of memory files to inject",
+      "default": 3,
+      "min": 1,
+      "max": 10
+    },
+    "embedding_device": {
+      "type": "string",
+      "title": "Embedding Device",
+      "description": "Inference device for embedding model (cpu/cuda)",
+      "default": "cpu"
+    },
+    "max_content_chars": {
+      "type": "number",
+      "title": "Max Content Chars",
+      "description": "Maximum total characters of injected memory content",
+      "default": 9000,
+      "min": 1000,
+      "max": 10000
     }
   }
 }
