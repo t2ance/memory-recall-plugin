@@ -27,7 +27,7 @@ PID_FILE = os.path.join(DATA_DIR, "daemon.pid")
 LOG_FILE = os.path.join(DATA_DIR, "daemon.log")
 
 MODEL_NAME = "intfloat/multilingual-e5-small"
-IDLE_TIMEOUT = 1800  # 30 minutes
+IDLE_TIMEOUT = 0  # 0 = no idle timeout, daemon runs until killed
 MAX_MSG_SIZE = 2 * 1024 * 1024  # 2MB
 
 logging.basicConfig(
@@ -175,6 +175,8 @@ class EmbeddingDaemon:
     # ---- lifecycle ----
 
     def _idle_checker(self):
+        if IDLE_TIMEOUT <= 0:
+            return
         while self.running:
             time.sleep(60)
             if time.time() - self.last_activity > IDLE_TIMEOUT:
