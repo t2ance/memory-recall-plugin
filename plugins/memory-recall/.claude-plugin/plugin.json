@@ -1,0 +1,14 @@
+{
+  "name": "memory-recall",
+  "version": "1.0.0",
+  "description": "Forces Claude to check memory files before responding. Injects a reminder with available topic files on every user prompt.",
+  "author": {
+    "name": "peijia"
+  },
+  "keywords": [
+    "memory",
+    "recall",
+    "context",
+    "compliance"
+  ]
+}
