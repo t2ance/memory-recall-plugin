@@ -216,14 +216,41 @@ def summarize_result(dim, result):
     return {"dim": dim, "status": "unknown"}
 
 
+def extract_agent_prompt(transcript_path, max_lines=100):
+    """Extract the last Agent tool_use prompt from the main agent's transcript."""
+    import subprocess
+    result = subprocess.run(
+        ["tail", "-n", str(max_lines), transcript_path],
+        capture_output=True, text=True, timeout=2,
+    )
+    assert result.returncode == 0, f"tail failed: {result.stderr}"
+    for line in reversed(result.stdout.strip().split("\n")):
+        if not line:
+            continue
+        msg = json.loads(line)
+        if msg.get("type") != "assistant":
+            continue
+        for block in msg.get("message", {}).get("content", []):
+            if block.get("type") == "tool_use" and block.get("name") == "Agent":
+                return block["input"]["prompt"]
+    return ""
+
+
 def main():
     import time
     t_start = time.time()
 
     hook_input = json.loads(sys.stdin.read())
-    prompt = hook_input.get("prompt", "")
+    event = hook_input.get("hook_event_name", "UserPromptSubmit")
     cwd = hook_input.get("cwd", "")
     transcript_path = hook_input.get("transcript_path", "")
+
+    if event == "SubagentStart":
+        # Wait for transcript flush (void recordTranscript is fire-and-forget, ~100ms)
+        time.sleep(0.2)
+        prompt = extract_agent_prompt(transcript_path) if transcript_path else ""
+    else:
+        prompt = hook_input.get("prompt", "")
 
     if not cwd:
         sys.exit(0)
@@ -295,6 +322,8 @@ def main():
     # Log
     log_entry = {
         "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "event": event,
+        "agent_type": hook_input.get("agent_type", ""),
         "query": prompt,
         "dimensions": {dim: backend for dim, backend, _ in tasks},
         "discovered": discovery_counts,
@@ -315,7 +344,7 @@ def main():
 
     print(json.dumps({
         "hookSpecificOutput": {
-            "hookEventName": "UserPromptSubmit",
+            "hookEventName": event,
             "additionalContext": additional_context,
         }
     }))
