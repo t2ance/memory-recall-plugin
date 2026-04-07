@@ -18,7 +18,7 @@ fi
 # Global memory directory (plugin data)
 global_mem_dir="${CLAUDE_PLUGIN_DATA:-$HOME/.claude/plugins/data/memory-recall}/global-memory"
 
-reminder="CRITICAL: Before responding, check your memory and instructions for relevant context. Read the MEMORY.md index in each directory and Read any topic files relevant to the user's query. Also review ~/.claude/CLAUDE.md for global instructions that may apply."
+reminder="MANDATORY — DO NOT SKIP: (1) BEFORE responding, read MEMORY.md in each memory directory below and Read any topic files relevant to the user's query. Also review ~/.claude/CLAUDE.md for global instructions. (2) AFTER responding, if this conversation produced any new information worth remembering (user preferences, corrections, decisions, lessons learned), write it to the appropriate memory directory."
 reminder="$reminder Project memory: $proj_mem_dir"
 reminder="$reminder Global memory: $global_mem_dir"
 reminder="$reminder Global instructions: $HOME/.claude/CLAUDE.md"
