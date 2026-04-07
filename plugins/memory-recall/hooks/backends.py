@@ -19,13 +19,16 @@ HOME = os.path.expanduser("~")
 
 
 def recall_reminder(dim, resources):
-    """List all resources. Zero cost, no filtering."""
+    """Return all resources as structured types. Zero cost, no filtering."""
     if not resources:
         return None
-    lines = [f"Available {dim}:"]
-    for r in resources:
-        lines.append(f"- {r['name']}: {r['description']}")
-    return "\n".join(lines)
+    if dim == "memory":
+        return {"type": "memory_files", "files": [r["id"] for r in resources]}
+    return {
+        "type": "recommendations",
+        "dim": dim,
+        "items": [{"name": r["name"], "reason": r["description"]} for r in resources],
+    }
 
 
 # -- Agentic ------------------------------------------------------------------
@@ -237,12 +240,20 @@ def recall_embedding_memory(resources, query, socket_path, memory_dirs, top_k, t
     return {"type": "memory_files", "files": [r["path"] for r in results]}
 
 
-def recall_embedding_generic(resources, query, socket_path, top_k, threshold):
+def recall_embedding_generic(resources, query, socket_path, top_k, threshold, input_granularity="title_desc"):
     """Embedding search over resource descriptions via daemon."""
+    resource_data = []
+    for r in resources:
+        if input_granularity == "full" and r.get("content_path") and os.path.isfile(r["content_path"]):
+            with open(r["content_path"]) as f:
+                desc = f.read()[:1000]
+        else:
+            desc = r["description"]
+        resource_data.append({"name": r["name"], "description": desc, "id": r["id"]})
     response = _query_daemon(socket_path, {
         "type": "search_descriptions",
         "query": query,
-        "resources": [{"name": r["name"], "description": r["description"], "id": r["id"]} for r in resources],
+        "resources": resource_data,
         "top_k": top_k,
         "threshold": threshold,
     })

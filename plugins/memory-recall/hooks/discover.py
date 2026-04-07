@@ -110,6 +110,7 @@ def discover_skills():
                         "name": name,
                         "description": fm.get("description", ""),
                         "id": name,
+                        "content_path": skill_md,
                     })
 
     # 2. Merge hardcoded built-in skills (skip if already discovered)
@@ -267,6 +268,7 @@ def discover_agents(cwd):
                 "name": name,
                 "description": fm.get("description", fm.get("whenToUse", "")),
                 "id": name,
+                "content_path": path,
             })
 
     # 2. Scan plugin cache for plugin-defined agents
@@ -296,6 +298,7 @@ def discover_agents(cwd):
                         "name": name,
                         "description": fm.get("description", fm.get("whenToUse", "")),
                         "id": name,
+                        "content_path": path,
                     })
 
     # 3. Hardcoded built-in agents

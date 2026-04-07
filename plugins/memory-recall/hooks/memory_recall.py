@@ -104,6 +104,7 @@ async def dispatch_one(dim, backend, resources, query, context, config, memory_d
             SOCKET_PATH, PLUGIN_ROOT, DATA_DIR,
             config["embedding_python"], config["embedding_model"], config["embedding_device"],
         )
+        input_gran = config.get(f"{dim}_input", "title_desc")
         if dim == "memory":
             result = recall_embedding_memory(
                 resources, query, SOCKET_PATH, memory_dirs,
@@ -113,6 +114,7 @@ async def dispatch_one(dim, backend, resources, query, context, config, memory_d
             result = recall_embedding_generic(
                 resources, query, SOCKET_PATH,
                 config["embedding_top_k"], config["embedding_threshold"],
+                input_gran,
             )
 
     else:
@@ -171,8 +173,6 @@ def format_memory_result(result, proj_mem_dir, global_mem_dir, max_chars, output
     """Format memory recall result."""
     if result is None:
         return None
-    if isinstance(result, str):
-        return result  # reminder text
     if result["type"] == "memory_files":
         parts = []
         total = 0
@@ -198,15 +198,30 @@ def format_memory_result(result, proj_mem_dir, global_mem_dir, max_chars, output
     return None
 
 
-def format_recommendation_result(result, output_granularity="title_desc"):
+def format_recommendation_result(result, resources=None, output_granularity="title_desc", max_chars=9000):
     """Format skill/tool/agent recommendations."""
     if result is None:
         return None
-    if isinstance(result, str):
-        return result  # reminder text
     if result["type"] == "recommendations":
         dim = result.get("dim", "resources")
         items = result["items"]
+        if output_granularity == "full" and resources:
+            resource_map = {r["name"]: r for r in resources}
+            parts = []
+            total = 0
+            for item in items:
+                r = resource_map.get(item["name"], {})
+                content_path = r.get("content_path")
+                if content_path and os.path.isfile(content_path):
+                    with open(content_path) as f:
+                        content = f.read()
+                    if total + len(content) > max_chars:
+                        break
+                    parts.append(f"# {dim}: {item['name']}\n{content}")
+                    total += len(content)
+                else:
+                    parts.append(f"- {item['name']}: {item.get('reason', '')}")
+            return "\n\n".join(parts) if parts else None
         lines = [f"Recommended {dim}:"]
         for item in items:
             lines.append(f"- {item['name']}: {item.get('reason', '')}")
@@ -214,9 +229,10 @@ def format_recommendation_result(result, output_granularity="title_desc"):
     return None
 
 
-def merge_results(results, proj_mem_dir, global_mem_dir, max_chars, config=None):
+def merge_results(results, proj_mem_dir, global_mem_dir, max_chars, config=None, dim_resources=None):
     """Merge all dimension results into a single additionalContext string."""
     config = config or {}
+    dim_resources = dim_resources or {}
     sections = []
 
     for dim, result in results:
@@ -227,7 +243,9 @@ def merge_results(results, proj_mem_dir, global_mem_dir, max_chars, config=None)
             )
         else:
             text = format_recommendation_result(
-                result, config.get(f"{dim}_output", "title_desc"),
+                result, dim_resources.get(dim, []),
+                config.get(f"{dim}_output", "title_desc"),
+                max_chars,
             )
         if text:
             sections.append(text)
@@ -263,8 +281,6 @@ def summarize_result(dim, result):
     """Extract a compact summary of a single dimension's result for logging."""
     if result is None:
         return {"dim": dim, "status": "no_results"}
-    if isinstance(result, str):
-        return {"dim": dim, "status": "reminder", "length": len(result)}
     if result.get("type") == "memory_files":
         return {"dim": dim, "status": "ok", "files": result["files"]}
     if result.get("type") == "recommendations":
@@ -366,7 +382,8 @@ def main():
     t_elapsed = round(time.time() - t_start, 2)
 
     # Merge output
-    additional_context = merge_results(results, proj_mem_dir, global_mem_dir, config["max_content_chars"], config)
+    dim_resources = {dim: resources for dim, _, resources in tasks}
+    additional_context = merge_results(results, proj_mem_dir, global_mem_dir, config["max_content_chars"], config, dim_resources)
 
     # Compute totals
     total_input_tokens = sum(u.get("input_tokens", 0) for u in per_dim_usage.values())
