@@ -249,7 +249,8 @@ def run_agentic(proj_mem_dir, global_mem_dir, prompt, transcript_path):
 
     files = parsed["files"]
     if not files:
-        run_reminder(proj_mem_dir, global_mem_dir)
+        note = "NOTE: agentic search ran but found no relevant memories.\n\n"
+        output_hook(note + build_reminder_text(proj_mem_dir, global_mem_dir))
         return
 
     inject_file_contents(files, proj_mem_dir, global_mem_dir)
@@ -323,7 +324,8 @@ def run_embedding(proj_mem_dir, global_mem_dir, prompt, transcript_path):
 
     results = response["results"]
     if not results:
-        run_reminder(proj_mem_dir, global_mem_dir)
+        note = "NOTE: embedding search ran but found no relevant memories.\n\n"
+        output_hook(note + build_reminder_text(proj_mem_dir, global_mem_dir))
         return
 
     # Inject file contents from daemon results
