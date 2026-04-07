@@ -78,7 +78,7 @@ async def recall_agentic(dim, resources, query, context, model):
         model=model,
         tools=[],
         settings='{"disableAllHooks": true}',
-        env={"CLAUDECODE": ""},
+        env={"CLAUDECODE": "", "CLAUDE_AGENT_SDK_SKIP_VERSION_CHECK": "1"},
         effort="low",
         max_budget_usd=0.01,
         extra_args={"no-session-persistence": None},
