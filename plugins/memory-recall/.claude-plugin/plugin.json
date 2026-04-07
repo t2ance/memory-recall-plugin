@@ -1,7 +1,7 @@
 {
   "name": "memory-recall",
-  "version": "2.0.0",
-  "description": "Smart memory recall with three backends: path reminder, agentic search (Haiku), or embedding RAG. Automatically injects relevant memory content on every user prompt.",
+  "version": "3.0.0",
+  "description": "Multi-dimension recall: memory, skills, tools, agent types. Each dimension independently configurable with reminder, agentic (Haiku), or embedding backend.",
   "author": {
     "name": "peijia"
   },
@@ -10,14 +10,35 @@
     "recall",
     "context",
     "rag",
-    "agentic"
+    "agentic",
+    "skills",
+    "tools",
+    "agents"
   ],
   "userConfig": {
-    "backend": {
+    "memory": {
       "type": "string",
-      "title": "Search Backend",
-      "description": "Which backend to use: 'reminder' (just paths), 'agentic' (Haiku selects files), or 'embedding' (local RAG daemon)",
+      "title": "Memory Recall Backend",
+      "description": "'off', 'reminder' (list paths), 'agentic' (Haiku selects files), or 'embedding' (local RAG)",
       "default": "reminder"
+    },
+    "skills": {
+      "type": "string",
+      "title": "Skills Recall Backend",
+      "description": "'off', 'reminder' (list all), 'agentic' (Haiku selects), or 'embedding' (vector match)",
+      "default": "off"
+    },
+    "tools": {
+      "type": "string",
+      "title": "Tools Recall Backend",
+      "description": "'off', 'reminder' (list all), 'agentic' (Haiku selects), or 'embedding' (vector match). Covers MCP servers + deferred tools.",
+      "default": "off"
+    },
+    "agents": {
+      "type": "string",
+      "title": "Agent Types Recall Backend",
+      "description": "'off', 'reminder' (list all), 'agentic' (Haiku selects), or 'embedding' (vector match)",
+      "default": "off"
     },
     "model": {
       "type": "string",
@@ -64,7 +85,7 @@
     "embedding_top_k": {
       "type": "number",
       "title": "Embedding Top K",
-      "description": "Maximum number of memory files to inject",
+      "description": "Maximum number of results to return per dimension",
       "default": 3,
       "min": 1,
       "max": 10

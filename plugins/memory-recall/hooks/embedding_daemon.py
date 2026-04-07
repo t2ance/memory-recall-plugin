@@ -146,6 +146,32 @@ class EmbeddingDaemon:
 
     # ---- connection handling ----
 
+    # ---- search_descriptions (for non-memory dimensions) ----
+
+    def search_descriptions(self, query, resources, top_k=DEFAULT_TOP_K, threshold=DEFAULT_THRESHOLD):
+        """Embed resource descriptions on-the-fly and match against query."""
+        if not resources:
+            return []
+
+        texts = [f"passage: {r['name']}: {r['description']}" for r in resources]
+        vecs = self.model.encode(texts, normalize_embeddings=True)
+        query_vec = self.model.encode([f"query: {query}"], normalize_embeddings=True)[0]
+
+        scores = []
+        for i, r in enumerate(resources):
+            score = float(np.dot(query_vec, vecs[i]))
+            scores.append((r, score))
+        scores.sort(key=lambda x: x[1], reverse=True)
+
+        results = []
+        for r, score in scores[:top_k]:
+            if score < threshold:
+                break
+            results.append({"name": r["name"], "id": r.get("id", r["name"]), "score": round(score, 4)})
+        return results
+
+    # ---- connection handling ----
+
     def handle_connection(self, conn):
         self.last_activity = time.time()
         try:
@@ -160,12 +186,22 @@ class EmbeddingDaemon:
                     return
 
             request = json.loads(data.decode())
-            results = self.search(
-                request["query"],
-                request["memory_dirs"],
-                request.get("top_k", DEFAULT_TOP_K),
-                request.get("threshold", DEFAULT_THRESHOLD),
-            )
+
+            if request.get("type") == "search_descriptions":
+                results = self.search_descriptions(
+                    request["query"],
+                    request["resources"],
+                    request.get("top_k", DEFAULT_TOP_K),
+                    request.get("threshold", DEFAULT_THRESHOLD),
+                )
+            else:
+                results = self.search(
+                    request["query"],
+                    request["memory_dirs"],
+                    request.get("top_k", DEFAULT_TOP_K),
+                    request.get("threshold", DEFAULT_THRESHOLD),
+                )
+
             response = {"status": "ok", "results": results}
             conn.sendall(json.dumps(response).encode())
         except BrokenPipeError:

@@ -1,35 +1,35 @@
 #!/usr/bin/env python3
-"""Three-backend memory recall hook.
+"""Multi-dimension recall hook.
 
-Backends (configured via plugin option CLAUDE_PLUGIN_OPTION_BACKEND):
-  reminder  -- inject memory paths, ask agent to read (default, zero-cost)
-  agentic   -- Agent SDK + Haiku selects files, inject content (~$0.003/query)
-  embedding -- local RAG daemon selects files, inject content (zero-cost after setup)
+Recalls relevant resources across 4 dimensions (memory, skills, tools, agents),
+each independently configurable with 3 backends (reminder, agentic, embedding).
 
-Errors crash the hook visibly (CC shows "hook error" to user).
+Entry point for UserPromptSubmit hook. Dispatches to dimension-specific
+discovery and generic backend functions in parallel.
 """
 
+import asyncio
 import json
 import os
-import socket
-import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from backends import (
+    ensure_daemon_running,
+    extract_context,
+    recall_agentic,
+    recall_embedding_generic,
+    recall_embedding_memory,
+    recall_reminder,
+)
+from discover import discover_agents, discover_memory, discover_skills, discover_tools
+
 # ---------------------------------------------------------------------------
-# Config from plugin options (env vars set by CC hook runner)
+# Config
 # ---------------------------------------------------------------------------
 
-BACKEND = os.environ.get("CLAUDE_PLUGIN_OPTION_BACKEND", "reminder")
-MODEL = os.environ.get("CLAUDE_PLUGIN_OPTION_MODEL", "haiku")
-CONTEXT_MESSAGES = int(os.environ.get("CLAUDE_PLUGIN_OPTION_CONTEXT_MESSAGES", "5"))
-CONTEXT_MAX_CHARS = int(os.environ.get("CLAUDE_PLUGIN_OPTION_CONTEXT_MAX_CHARS", "2000"))
-
-EMBEDDING_MODEL = os.environ.get("CLAUDE_PLUGIN_OPTION_EMBEDDING_MODEL", "intfloat/multilingual-e5-small")
-EMBEDDING_PYTHON = os.path.expanduser(os.environ.get("CLAUDE_PLUGIN_OPTION_EMBEDDING_PYTHON", "~/miniconda3/envs/memory-recall/bin/python"))
-EMBEDDING_THRESHOLD = float(os.environ.get("CLAUDE_PLUGIN_OPTION_EMBEDDING_THRESHOLD", "0.85"))
-EMBEDDING_TOP_K = int(os.environ.get("CLAUDE_PLUGIN_OPTION_EMBEDDING_TOP_K", "3"))
-EMBEDDING_DEVICE = os.environ.get("CLAUDE_PLUGIN_OPTION_EMBEDDING_DEVICE", "cpu")
-MAX_CONTENT_CHARS = int(os.environ.get("CLAUDE_PLUGIN_OPTION_MAX_CONTENT_CHARS", "9000"))
+DIMENSIONS = ["memory", "skills", "tools", "agents"]
 
 HOME = os.path.expanduser("~")
 DATA_DIR = os.environ.get(
@@ -42,295 +42,152 @@ PLUGIN_ROOT = os.environ.get(
 )
 SOCKET_PATH = os.path.join(DATA_DIR, "daemon.sock")
 
-# ---------------------------------------------------------------------------
-# Hook I/O
-# ---------------------------------------------------------------------------
 
-
-def output_hook(additional_context):
-    print(json.dumps({
-        "hookSpecificOutput": {
-            "hookEventName": "UserPromptSubmit",
-            "additionalContext": additional_context,
-        }
-    }))
-
-
-def output_memory_content(parts, proj_mem_dir, global_mem_dir):
-    output_hook(
-        "As you answer the user's questions, you can use the following context:\n"
-        + "\n\n".join(parts)
-        + f"\n\nProject memory: {proj_mem_dir}\nGlobal memory: {global_mem_dir}"
-    )
-
-
-def output_no_results(backend_name, proj_mem_dir, global_mem_dir):
-    output_hook(
-        f"NOTE: {backend_name} search ran but found no relevant memories.\n\n"
-        + build_reminder_text(proj_mem_dir, global_mem_dir)
-    )
-
-
-# ---------------------------------------------------------------------------
-# Shared helpers
-# ---------------------------------------------------------------------------
-
-
-def compute_memory_dirs(cwd):
-    sanitized = cwd.replace("/", "-").lstrip("-")
-    proj_candidates = [
-        os.path.join(HOME, ".claude", "projects", f"-{sanitized}", "memory"),
-        os.path.join(HOME, ".claude", "projects", sanitized, "memory"),
-    ]
-    proj_mem_dir = next(
-        (p for p in proj_candidates if os.path.isdir(p)),
-        proj_candidates[0],
-    )
-    global_mem_dir = os.path.join(DATA_DIR, "global-memory")
-    return proj_mem_dir, global_mem_dir
-
-
-def build_reminder_text(proj_mem_dir, global_mem_dir):
-    return (
-        f"CRITICAL: Before responding, check your memory directories for relevant context. "
-        f"Read the MEMORY.md index in each directory and Read any topic files relevant to the user's query. "
-        f"Also review ~/.claude/CLAUDE.md for global instructions. "
-        f"Project memory: {proj_mem_dir} "
-        f"Global memory: {global_mem_dir}"
-    )
-
-
-def parse_frontmatter(path):
-    with open(path) as f:
-        content = f.read(2000)
-    if not content.startswith("---"):
-        return {}
-    end = content.find("---", 3)
-    if end == -1:
-        return {}
-    result = {}
-    for line in content[3:end].strip().split("\n"):
-        if ":" in line:
-            key, _, value = line.partition(":")
-            result[key.strip()] = value.strip()
-    return result
-
-
-def build_manifest(proj_mem_dir, global_mem_dir):
-    entries = []
-    for mem_dir in [proj_mem_dir, global_mem_dir]:
-        if not os.path.isdir(mem_dir):
-            continue
-        for fname in sorted(os.listdir(mem_dir)):
-            if not fname.endswith(".md") or fname == "MEMORY.md":
-                continue
-            path = os.path.join(mem_dir, fname)
-            fm = parse_frontmatter(path)
-            entries.append(f"- {fm.get('name', fname)} ({fm.get('type', 'unknown')}): {fm.get('description', '')} [{path}]")
-    return "\n".join(entries)
-
-
-def extract_context(transcript_path):
-    if not transcript_path or not os.path.exists(transcript_path):
-        return ""
-    result = subprocess.run(
-        ["tail", "-n", "50", transcript_path],
-        capture_output=True, text=True, timeout=2,
-    )
-    if result.returncode != 0:
-        return ""
-    messages = []
-    for line in result.stdout.strip().split("\n"):
-        if not line:
-            continue
-        msg = json.loads(line)
-        role = msg.get("role")
-        if role not in ("user", "assistant"):
-            continue
-        content = msg.get("content", "")
-        if isinstance(content, list):
-            content = " ".join(
-                b.get("text", "")
-                for b in content
-                if isinstance(b, dict) and b.get("type") == "text"
-            )
-        if not isinstance(content, str):
-            continue
-        messages.append(f"{role}: {content[:500]}")
-
-    recent = messages[-CONTEXT_MESSAGES:]
-    context = "\n".join(recent)
-    if len(context) > CONTEXT_MAX_CHARS:
-        context = context[-CONTEXT_MAX_CHARS:]
-    return context
-
-
-def read_and_format_files(file_paths, proj_mem_dir, global_mem_dir):
-    parts = []
-    total_chars = 0
-    for path in file_paths:
-        if not os.path.exists(path):
-            continue
-        with open(path) as f:
-            content = f.read()
-        if total_chars + len(content) > MAX_CONTENT_CHARS:
-            break
-        parts.append(f"# Memory: {os.path.basename(path)}\n{content}")
-        total_chars += len(content)
-    if not parts:
-        output_hook(build_reminder_text(proj_mem_dir, global_mem_dir))
-        return
-    output_memory_content(parts, proj_mem_dir, global_mem_dir)
-
-
-# ---------------------------------------------------------------------------
-# Backend: reminder
-# ---------------------------------------------------------------------------
-
-
-def run_reminder(proj_mem_dir, global_mem_dir):
-    output_hook(build_reminder_text(proj_mem_dir, global_mem_dir))
-
-
-# ---------------------------------------------------------------------------
-# Backend: agentic
-# ---------------------------------------------------------------------------
-
-
-def run_agentic(proj_mem_dir, global_mem_dir, prompt, transcript_path):
-    import asyncio
-    import re
-    from claude_agent_sdk import query as sdk_query
-    from claude_agent_sdk import ClaudeAgentOptions
-    from claude_agent_sdk.types import AssistantMessage
-
-    manifest = build_manifest(proj_mem_dir, global_mem_dir)
-    assert manifest, "No memory files found for manifest"
-
-    context = extract_context(transcript_path)
-
-    agentic_prompt = f"Catalog:\n{manifest}\n"
-    if context:
-        agentic_prompt += f"\nRecent conversation:\n{context}\n"
-    agentic_prompt += f"\nQuery: {prompt}"
-
-    options = ClaudeAgentOptions(
-        system_prompt=(
-            'Select 0-3 relevant memory files for the query. '
-            'Return ONLY a JSON object: {"files": ["path1", ...]}. '
-            'No explanation.'
+def load_config():
+    return {
+        # Per-dimension backend: off | reminder | agentic | embedding
+        "memory": os.environ.get("CLAUDE_PLUGIN_OPTION_MEMORY", "reminder"),
+        "skills": os.environ.get("CLAUDE_PLUGIN_OPTION_SKILLS", "off"),
+        "tools": os.environ.get("CLAUDE_PLUGIN_OPTION_TOOLS", "off"),
+        "agents": os.environ.get("CLAUDE_PLUGIN_OPTION_AGENTS", "off"),
+        # Shared options
+        "model": os.environ.get("CLAUDE_PLUGIN_OPTION_MODEL", "haiku"),
+        "context_messages": int(os.environ.get("CLAUDE_PLUGIN_OPTION_CONTEXT_MESSAGES", "5")),
+        "context_max_chars": int(os.environ.get("CLAUDE_PLUGIN_OPTION_CONTEXT_MAX_CHARS", "2000")),
+        "max_content_chars": int(os.environ.get("CLAUDE_PLUGIN_OPTION_MAX_CONTENT_CHARS", "9000")),
+        # Embedding-specific
+        "embedding_model": os.environ.get("CLAUDE_PLUGIN_OPTION_EMBEDDING_MODEL", "intfloat/multilingual-e5-small"),
+        "embedding_python": os.path.expanduser(
+            os.environ.get("CLAUDE_PLUGIN_OPTION_EMBEDDING_PYTHON", "~/miniconda3/envs/memory-recall/bin/python")
         ),
-        model=MODEL,
-        tools=[],
-        settings='{"disableAllHooks": true}',
-        env={"CLAUDECODE": ""},
-        effort="low",
-        max_budget_usd=0.01,
-        extra_args={"no-session-persistence": None},
-    )
-
-    result_text = ""
-
-    async def _run():
-        nonlocal result_text
-        async for msg in sdk_query(prompt=agentic_prompt, options=options):
-            if isinstance(msg, AssistantMessage):
-                for block in msg.content:
-                    if hasattr(block, "text"):
-                        result_text += block.text
-
-    asyncio.run(_run())
-    assert result_text, "Empty response from agentic search"
-
-    clean = re.sub(r"```json?\s*", "", result_text)
-    clean = re.sub(r"```", "", clean).strip()
-    parsed = json.loads(clean)
-
-    files = parsed["files"]
-    if not files:
-        output_no_results("agentic", proj_mem_dir, global_mem_dir)
-        return
-
-    read_and_format_files(files, proj_mem_dir, global_mem_dir)
+        "embedding_threshold": float(os.environ.get("CLAUDE_PLUGIN_OPTION_EMBEDDING_THRESHOLD", "0.85")),
+        "embedding_top_k": int(os.environ.get("CLAUDE_PLUGIN_OPTION_EMBEDDING_TOP_K", "3")),
+        "embedding_device": os.environ.get("CLAUDE_PLUGIN_OPTION_EMBEDDING_DEVICE", "cpu"),
+    }
 
 
 # ---------------------------------------------------------------------------
-# Backend: embedding
+# Parallel dispatch
 # ---------------------------------------------------------------------------
 
 
-def query_daemon(query_text, memory_dirs, top_k=EMBEDDING_TOP_K, threshold=EMBEDDING_THRESHOLD):
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.settimeout(3.0)
-    try:
-        sock.connect(SOCKET_PATH)
-        sock.sendall(json.dumps({
-            "query": query_text,
-            "memory_dirs": memory_dirs,
-            "top_k": top_k,
-            "threshold": threshold,
-        }).encode())
-        sock.shutdown(socket.SHUT_WR)
-        data = b""
-        while True:
-            chunk = sock.recv(4096)
-            if not chunk:
+async def dispatch_one(dim, backend, resources, query, context, config, memory_dirs):
+    """Run recall for a single dimension with its configured backend.
+
+    Returns (dim, result, elapsed_s, usage_dict).
+    usage_dict has token/cost info for agentic, empty dict otherwise.
+    """
+    import time as _time
+    t0 = _time.time()
+    usage = {}
+
+    if backend == "reminder":
+        result = recall_reminder(dim, resources)
+
+    elif backend == "agentic":
+        result, usage = await recall_agentic(dim, resources, query, context, config["model"])
+
+    elif backend == "embedding":
+        ensure_daemon_running(
+            SOCKET_PATH, PLUGIN_ROOT, DATA_DIR,
+            config["embedding_python"], config["embedding_model"], config["embedding_device"],
+        )
+        if dim == "memory":
+            result = recall_embedding_memory(
+                resources, query, SOCKET_PATH, memory_dirs,
+                config["embedding_top_k"], config["embedding_threshold"],
+            )
+        else:
+            result = recall_embedding_generic(
+                resources, query, SOCKET_PATH,
+                config["embedding_top_k"], config["embedding_threshold"],
+            )
+
+    else:
+        assert False, f"Unknown backend: {backend}"
+
+    elapsed = round(_time.time() - t0, 2)
+    return dim, result, elapsed, usage
+
+
+async def run_all(tasks, query, context, config, memory_dirs):
+    """Run all dimension recalls in parallel."""
+    coros = [
+        dispatch_one(dim, backend, resources, query, context, config, memory_dirs)
+        for dim, backend, resources in tasks
+    ]
+    return await asyncio.gather(*coros)
+
+
+# ---------------------------------------------------------------------------
+# Output formatting
+# ---------------------------------------------------------------------------
+
+
+def format_memory_result(result, proj_mem_dir, global_mem_dir, max_chars):
+    """Format memory recall result (file contents or reminder)."""
+    if result is None:
+        return None
+    if isinstance(result, str):
+        return result  # reminder text
+    if result["type"] == "memory_files":
+        parts = []
+        total = 0
+        for path in result["files"]:
+            if not os.path.exists(path):
+                continue
+            with open(path) as f:
+                content = f.read()
+            if total + len(content) > max_chars:
                 break
-            data += chunk
-    finally:
-        sock.close()
-    return json.loads(data.decode())
+            parts.append(f"# Memory: {os.path.basename(path)}\n{content}")
+            total += len(content)
+        if not parts:
+            return None
+        return "\n\n".join(parts)
+    return None
 
 
-def ensure_daemon_running():
-    if os.path.exists(SOCKET_PATH):
-        return
-    daemon_script = os.path.join(PLUGIN_ROOT, "hooks", "embedding_daemon.py")
-    assert os.path.isfile(EMBEDDING_PYTHON), f"Daemon python not found: {EMBEDDING_PYTHON}"
-    assert os.path.isfile(daemon_script), f"Daemon script not found: {daemon_script}"
-    os.makedirs(DATA_DIR, exist_ok=True)
-    log_handle = open(os.path.join(DATA_DIR, "daemon.log"), "a")
-    env = os.environ.copy()
-    env["EMBEDDING_MODEL"] = EMBEDDING_MODEL
-    env["EMBEDDING_DEVICE"] = EMBEDDING_DEVICE
-    subprocess.Popen(
-        [EMBEDDING_PYTHON, daemon_script],
-        env=env,
-        stdout=log_handle,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
-    log_handle.close()
+def format_recommendation_result(result):
+    """Format skill/tool/agent recommendations."""
+    if result is None:
+        return None
+    if isinstance(result, str):
+        return result  # reminder text
+    if result["type"] == "recommendations":
+        dim = result.get("dim", "resources")
+        items = result["items"]
+        lines = [f"Recommended {dim}:"]
+        for item in items:
+            lines.append(f"- {item['name']}: {item.get('reason', '')}")
+        return "\n".join(lines)
+    return None
 
 
-def run_embedding(proj_mem_dir, global_mem_dir, prompt, transcript_path):
-    memory_dirs = [d for d in [proj_mem_dir, global_mem_dir] if os.path.isdir(d)]
-    assert memory_dirs, "No memory directories exist"
+def merge_results(results, proj_mem_dir, global_mem_dir, max_chars):
+    """Merge all dimension results into a single additionalContext string."""
+    sections = []
 
-    context_parts = []
-    context = extract_context(transcript_path)
-    if context:
-        context_parts.append(context.replace("\n", " "))
-    context_parts.append(prompt)
-    query_text = " ".join(context_parts)
+    for dim, result in results:
+        if dim == "memory":
+            text = format_memory_result(result, proj_mem_dir, global_mem_dir, max_chars)
+        else:
+            text = format_recommendation_result(result)
+        if text:
+            sections.append(text)
 
-    ensure_daemon_running()
-    response = query_daemon(query_text, memory_dirs)
-    assert response["status"] == "ok", f"daemon error: {response.get('error')}"
+    if not sections:
+        return (
+            f"CRITICAL: Before responding, check your memory directories for relevant context. "
+            f"Read the MEMORY.md index in each directory and Read any topic files relevant to the user's query. "
+            f"Also review ~/.claude/CLAUDE.md for global instructions. "
+            f"Project memory: {proj_mem_dir} "
+            f"Global memory: {global_mem_dir}"
+        )
 
-    results = response["results"]
-    if not results:
-        output_no_results("embedding", proj_mem_dir, global_mem_dir)
-        return
-
-    parts = []
-    total_chars = 0
-    for r in results:
-        if total_chars + len(r["content"]) > MAX_CONTENT_CHARS:
-            break
-        parts.append(f"# Memory: {os.path.basename(r['path'])}\n{r['content']}")
-        total_chars += len(r["content"])
-    output_memory_content(parts, proj_mem_dir, global_mem_dir)
+    header = "As you answer the user's questions, you can use the following context:\n"
+    footer = f"\n\nProject memory: {proj_mem_dir}\nGlobal memory: {global_mem_dir}"
+    return header + "\n\n".join(sections) + footer
 
 
 # ---------------------------------------------------------------------------
@@ -338,7 +195,31 @@ def run_embedding(proj_mem_dir, global_mem_dir, prompt, transcript_path):
 # ---------------------------------------------------------------------------
 
 
+def write_log(entry):
+    """Append a structured JSON log entry to the recall log file."""
+    log_path = os.path.join(DATA_DIR, "recall.log")
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with open(log_path, "a") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def summarize_result(dim, result):
+    """Extract a compact summary of a single dimension's result for logging."""
+    if result is None:
+        return {"dim": dim, "status": "no_results"}
+    if isinstance(result, str):
+        return {"dim": dim, "status": "reminder", "length": len(result)}
+    if result.get("type") == "memory_files":
+        return {"dim": dim, "status": "ok", "files": result["files"]}
+    if result.get("type") == "recommendations":
+        return {"dim": dim, "status": "ok", "items": [i["name"] for i in result["items"]]}
+    return {"dim": dim, "status": "unknown"}
+
+
 def main():
+    import time
+    t_start = time.time()
+
     hook_input = json.loads(sys.stdin.read())
     prompt = hook_input.get("prompt", "")
     cwd = hook_input.get("cwd", "")
@@ -347,16 +228,97 @@ def main():
     if not cwd:
         sys.exit(0)
 
-    proj_mem_dir, global_mem_dir = compute_memory_dirs(cwd)
+    config = load_config()
 
-    if BACKEND == "reminder":
-        run_reminder(proj_mem_dir, global_mem_dir)
-    elif BACKEND == "agentic":
-        run_agentic(proj_mem_dir, global_mem_dir, prompt, transcript_path)
-    elif BACKEND == "embedding":
-        run_embedding(proj_mem_dir, global_mem_dir, prompt, transcript_path)
-    else:
-        assert False, f"Unknown backend: {BACKEND}"
+    # Discover resources for each enabled dimension
+    tasks = []
+    proj_mem_dir = global_mem_dir = ""
+    memory_dirs = []
+    discovery_counts = {}
+
+    for dim in DIMENSIONS:
+        backend = config[dim]
+        if backend == "off":
+            continue
+
+        if dim == "memory":
+            resources, proj_mem_dir, global_mem_dir = discover_memory(cwd)
+            memory_dirs = [d for d in [proj_mem_dir, global_mem_dir] if os.path.isdir(d)]
+        elif dim == "skills":
+            resources = discover_skills()
+        elif dim == "tools":
+            resources = discover_tools()
+        elif dim == "agents":
+            resources = discover_agents(cwd)
+        else:
+            assert False, f"Unknown dimension: {dim}"
+
+        discovery_counts[dim] = len(resources)
+        tasks.append((dim, backend, resources))
+
+    if not tasks:
+        sys.exit(0)
+
+    # If memory wasn't enabled, still compute dirs for output footer
+    if not proj_mem_dir:
+        from discover import _compute_memory_dirs
+        proj_mem_dir, global_mem_dir = _compute_memory_dirs(cwd, DATA_DIR)
+
+    # Extract conversation context (shared across dimensions)
+    context = ""
+    needs_context = any(b in ("agentic", "embedding") for _, b, _ in tasks)
+    if needs_context:
+        context = extract_context(transcript_path, config["context_messages"], config["context_max_chars"])
+
+    # Run all in parallel
+    t_before_recall = time.time()
+    raw_results = asyncio.run(run_all(tasks, prompt, context, config, memory_dirs))
+    t_after_recall = time.time()
+
+    # Unpack: raw_results is [(dim, result, per_dim_elapsed, usage), ...]
+    results = [(dim, result) for dim, result, _, _ in raw_results]
+    per_dim_times = {dim: elapsed for dim, _, elapsed, _ in raw_results}
+    per_dim_usage = {dim: usage for dim, _, _, usage in raw_results if usage}
+
+    t_elapsed = round(time.time() - t_start, 2)
+
+    # Merge output
+    additional_context = merge_results(results, proj_mem_dir, global_mem_dir, config["max_content_chars"])
+
+    # Compute totals
+    total_input_tokens = sum(u.get("input_tokens", 0) for u in per_dim_usage.values())
+    total_output_tokens = sum(u.get("output_tokens", 0) for u in per_dim_usage.values())
+    total_cost_usd = sum(u.get("cost_usd", 0) for u in per_dim_usage.values())
+    # Context injection cost: estimate tokens from additionalContext length (~3 chars/token mixed)
+    injection_tokens_est = len(additional_context) // 3
+
+    # Log
+    log_entry = {
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "query": prompt[:200],
+        "dimensions": {dim: backend for dim, backend, _ in tasks},
+        "discovered": discovery_counts,
+        "results": [summarize_result(dim, result) for dim, result in results],
+        "per_dim_s": per_dim_times,
+        "per_dim_usage": per_dim_usage,
+        "haiku_input_tokens": total_input_tokens,
+        "haiku_output_tokens": total_output_tokens,
+        "haiku_cost_usd": round(total_cost_usd, 6),
+        "injection_chars": len(additional_context),
+        "injection_tokens_est": injection_tokens_est,
+        "elapsed_s": t_elapsed,
+        "recall_s": round(t_after_recall - t_before_recall, 2),
+        "discovery_s": round(t_before_recall - t_start, 2),
+        "output": additional_context,
+    }
+    write_log(log_entry)
+
+    print(json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": additional_context,
+        }
+    }))
 
 
 if __name__ == "__main__":
