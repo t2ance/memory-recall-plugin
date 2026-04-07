@@ -197,10 +197,10 @@ def merge_results(results, proj_mem_dir, global_mem_dir, max_chars):
 
 def write_log(entry):
     """Append a structured JSON log entry to the recall log file."""
-    log_path = os.path.join(DATA_DIR, "recall.log")
+    log_path = os.path.join(DATA_DIR, "recall.jsonl")
     os.makedirs(DATA_DIR, exist_ok=True)
     with open(log_path, "a") as f:
-        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        f.write(json.dumps(entry, indent=2, ensure_ascii=False) + "\n\n")
 
 
 def summarize_result(dim, result):
