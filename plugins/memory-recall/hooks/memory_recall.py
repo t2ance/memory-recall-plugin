@@ -281,7 +281,7 @@ def ensure_daemon_running():
     """Start embedding daemon in background if not running."""
     if os.path.exists(SOCKET_PATH):
         return  # socket exists, daemon likely running
-    daemon_script = os.path.join(PLUGIN_ROOT, "hooks", "daemon.py")
+    daemon_script = os.path.join(PLUGIN_ROOT, "hooks", "embedding_daemon.py")
     assert os.path.isfile(DAEMON_PYTHON), f"Daemon python not found: {DAEMON_PYTHON}"
     assert os.path.isfile(daemon_script), f"Daemon script not found: {daemon_script}"
     log_file = os.path.join(DATA_DIR, "daemon.log")
