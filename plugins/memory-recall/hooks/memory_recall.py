@@ -361,25 +361,11 @@ def main():
     if BACKEND == "reminder":
         run_reminder(proj_mem_dir, global_mem_dir)
     elif BACKEND == "agentic":
-        try:
-            run_agentic(proj_mem_dir, global_mem_dir, prompt, transcript_path)
-        except Exception as exc:
-            warning = (
-                f"WARNING: agentic memory search FAILED ({type(exc).__name__}: {exc}). "
-                f"Report this to the user immediately so they can investigate.\n\n"
-            )
-            output_hook(warning + build_reminder_text(proj_mem_dir, global_mem_dir))
+        run_agentic(proj_mem_dir, global_mem_dir, prompt, transcript_path)
     elif BACKEND == "embedding":
-        try:
-            run_embedding(proj_mem_dir, global_mem_dir, prompt, transcript_path)
-        except Exception as exc:
-            warning = (
-                f"WARNING: embedding memory search FAILED ({type(exc).__name__}: {exc}). "
-                f"Report this to the user immediately so they can investigate.\n\n"
-            )
-            output_hook(warning + build_reminder_text(proj_mem_dir, global_mem_dir))
+        run_embedding(proj_mem_dir, global_mem_dir, prompt, transcript_path)
     else:
-        run_reminder(proj_mem_dir, global_mem_dir)
+        assert False, f"Unknown backend: {BACKEND}"
 
 
 if __name__ == "__main__":
