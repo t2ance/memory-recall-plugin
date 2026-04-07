@@ -64,7 +64,7 @@ async def recall_agentic(dim, resources, query, context, model, input_granularit
     from claude_agent_sdk import ClaudeAgentOptions
     from claude_agent_sdk.types import AssistantMessage, ResultMessage
 
-    if input_granularity == "full" and dim == "memory":
+    if input_granularity == "full":
         lines = []
         for r in resources:
             path = r["id"]

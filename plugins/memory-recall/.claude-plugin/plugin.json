@@ -52,16 +52,34 @@
       "description": "What gets injected to main model: 'title_desc' or 'full' (entire file content)",
       "default": "full"
     },
+    "skills_input": {
+      "type": "string",
+      "title": "Skills Input Granularity",
+      "description": "What Haiku sees: 'title_desc' (name+description) or 'full' (SKILL.md content, truncated)",
+      "default": "title_desc"
+    },
     "skills_output": {
       "type": "string",
       "title": "Skills Output Granularity",
       "description": "What gets injected: 'title_desc' (name+reason) or 'full' (skill SKILL.md content)",
       "default": "title_desc"
     },
+    "tools_input": {
+      "type": "string",
+      "title": "Tools Input Granularity",
+      "description": "What Haiku sees: 'title_desc' (name+description) or 'full' (full tool description)",
+      "default": "title_desc"
+    },
     "tools_output": {
       "type": "string",
       "title": "Tools Output Granularity",
-      "description": "What gets injected: 'title_desc' (name+reason) or 'full' (not applicable for most tools)",
+      "description": "What gets injected: 'title_desc' (name+reason) or 'full'",
+      "default": "title_desc"
+    },
+    "agents_input": {
+      "type": "string",
+      "title": "Agents Input Granularity",
+      "description": "What Haiku sees: 'title_desc' (name+description) or 'full' (agent markdown content, truncated)",
       "default": "title_desc"
     },
     "agents_output": {
