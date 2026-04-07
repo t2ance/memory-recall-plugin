@@ -112,7 +112,7 @@ async def dispatch_one(dim, backend, resources, query, context, config, memory_d
             )
         else:
             result = recall_embedding_generic(
-                resources, query, SOCKET_PATH,
+                dim, resources, query, SOCKET_PATH,
                 config["embedding_top_k"], config["embedding_threshold"],
                 input_gran,
             )
@@ -235,20 +235,24 @@ def merge_results(results, proj_mem_dir, global_mem_dir, max_chars, config=None,
     dim_resources = dim_resources or {}
     sections = []
 
+    remaining = max_chars
     for dim, result in results:
         if dim == "memory":
             text = format_memory_result(
-                result, proj_mem_dir, global_mem_dir, max_chars,
+                result, proj_mem_dir, global_mem_dir, remaining,
                 config.get("memory_output", "full"),
             )
         else:
             text = format_recommendation_result(
                 result, dim_resources.get(dim, []),
                 config.get(f"{dim}_output", "title_desc"),
-                max_chars,
+                remaining,
             )
         if text:
             sections.append(text)
+            remaining -= len(text)
+            if remaining <= 0:
+                break
 
     if not sections:
         return (

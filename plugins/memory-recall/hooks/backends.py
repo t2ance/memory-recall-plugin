@@ -70,8 +70,8 @@ async def recall_agentic(dim, resources, query, context, model, input_granularit
     if input_granularity == "full":
         lines = []
         for r in resources:
-            path = r["id"]
-            if os.path.exists(path):
+            path = r.get("content_path") or r["id"]
+            if os.path.isfile(path):
                 with open(path) as f:
                     content = f.read()
                 lines.append(f"- [{r['name']}] {content[:500]} [id={r['id']}]")
@@ -240,7 +240,7 @@ def recall_embedding_memory(resources, query, socket_path, memory_dirs, top_k, t
     return {"type": "memory_files", "files": [r["path"] for r in results]}
 
 
-def recall_embedding_generic(resources, query, socket_path, top_k, threshold, input_granularity="title_desc"):
+def recall_embedding_generic(dim, resources, query, socket_path, top_k, threshold, input_granularity="title_desc"):
     """Embedding search over resource descriptions via daemon."""
     resource_data = []
     for r in resources:
@@ -263,7 +263,7 @@ def recall_embedding_generic(resources, query, socket_path, top_k, threshold, in
         return None
     return {
         "type": "recommendations",
-        "dim": "generic",
+        "dim": dim,
         "items": [{"name": r["name"], "reason": f"similarity={r['score']:.2f}"} for r in results],
     }
 
