@@ -428,4 +428,14 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        import traceback
+        import time
+        write_log({
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "event": "crash",
+            "error": traceback.format_exc(),
+        })
+        raise
