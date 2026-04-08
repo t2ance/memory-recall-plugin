@@ -5,10 +5,8 @@ and returns recall results. The backends do not know which dimension
 they are serving -- they only see resources and a query.
 """
 
-import asyncio
 import json
 import os
-import re
 import socket
 import subprocess
 
@@ -35,22 +33,43 @@ def recall_reminder(dim, resources):
 
 
 AGENTIC_SYSTEM_PROMPTS = {
-    "memory": (
-        "Select 0-3 memory files most relevant to the query. "
-        'Return ONLY JSON: {{"files": ["id1", ...]}}. No explanation.'
-    ),
-    "skills": (
-        "Select 0-3 skills most relevant to the user's task. "
-        'Return ONLY JSON: {{"items": [{{"name": "...", "reason": "..."}}]}}. No explanation.'
-    ),
-    "tools": (
-        "Select 0-5 tools/MCP servers most relevant to the user's task. "
-        'Return ONLY JSON: {{"items": [{{"name": "...", "reason": "..."}}]}}. No explanation.'
-    ),
-    "agents": (
-        "Select 0-2 agent types best suited for the user's task. "
-        'Return ONLY JSON: {{"items": [{{"name": "...", "reason": "..."}}]}}. No explanation.'
-    ),
+    "memory": "Select 0-3 memory files most relevant to the query.",
+    "skills": "Select 0-3 skills most relevant to the user's task.",
+    "tools": "Select 0-5 tools/MCP servers most relevant to the user's task.",
+    "agents": "Select 0-2 agent types best suited for the user's task.",
+}
+
+_ITEMS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "items": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "reason": {"type": "string"},
+                },
+                "required": ["name", "reason"],
+            },
+        },
+    },
+    "required": ["items"],
+}
+
+_MEMORY_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "files": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["files"],
+}
+
+AGENTIC_SCHEMAS = {
+    "memory": {"type": "json_schema", "schema": _MEMORY_SCHEMA},
+    "skills": {"type": "json_schema", "schema": _ITEMS_SCHEMA},
+    "tools": {"type": "json_schema", "schema": _ITEMS_SCHEMA},
+    "agents": {"type": "json_schema", "schema": _ITEMS_SCHEMA},
 }
 
 
@@ -65,7 +84,7 @@ async def recall_agentic(dim, resources, query, context, model, input_granularit
 
     from claude_agent_sdk import query as sdk_query
     from claude_agent_sdk import ClaudeAgentOptions
-    from claude_agent_sdk.types import AssistantMessage, ResultMessage
+    from claude_agent_sdk.types import ResultMessage
 
     if input_granularity == "full":
         lines = []
@@ -93,6 +112,7 @@ async def recall_agentic(dim, resources, query, context, model, input_granularit
         system_prompt=AGENTIC_SYSTEM_PROMPTS[dim],
         model=model,
         tools=[],
+        output_format=AGENTIC_SCHEMAS[dim],
         settings='{"disableAllHooks": true}',
         env={"CLAUDECODE": "", "CLAUDE_AGENT_SDK_SKIP_VERSION_CHECK": "1"},
         effort="low",
@@ -100,27 +120,20 @@ async def recall_agentic(dim, resources, query, context, model, input_granularit
         extra_args={"no-session-persistence": None},
     )
 
-    result_text = ""
+    parsed = None
     usage = {}
     async for msg in sdk_query(prompt=agentic_prompt, options=options):
-        if isinstance(msg, AssistantMessage):
-            for block in msg.content:
-                if hasattr(block, "text"):
-                    result_text += block.text
-        elif isinstance(msg, ResultMessage):
+        if isinstance(msg, ResultMessage):
             usage = {
                 "input_tokens": msg.usage.get("input_tokens", 0) if msg.usage else 0,
                 "output_tokens": msg.usage.get("output_tokens", 0) if msg.usage else 0,
                 "cost_usd": msg.total_cost_usd or 0,
                 "duration_api_ms": msg.duration_api_ms,
             }
+            parsed = msg.structured_output
 
-    assert result_text, f"Empty response from agentic {dim} recall"
-
-    clean = re.sub(r"```json?\s*", "", result_text)
-    clean = re.sub(r"```", "", clean).strip()
-    decoder = json.JSONDecoder()
-    parsed, _ = decoder.raw_decode(clean)
+    if not parsed:
+        return None, usage
 
     if dim == "memory":
         files = parsed.get("files", [])
@@ -139,14 +152,8 @@ async def recall_agentic(dim, resources, query, context, model, input_granularit
 
 MERGED_SYSTEM_PROMPT = (
     "You are a context recommender. Given multiple catalogs and a query, "
-    "select the most relevant items from EACH catalog independently.\n"
-    "Return ONLY a JSON object with one key per catalog:\n"
-    '{"memory": {"files": ["id1", ...]}, '
-    '"skills": {"items": [{"name": "...", "reason": "..."}]}, '
-    '"tools": {"items": [{"name": "...", "reason": "..."}]}, '
-    '"agents": {"items": [{"name": "...", "reason": "..."}]}}\n'
-    "Only include catalogs that were provided. Select 0-3 items per catalog. "
-    "No explanation outside the JSON."
+    "select the most relevant items from EACH catalog independently. "
+    "Select 0-3 items per catalog."
 )
 
 
@@ -157,7 +164,7 @@ async def recall_agentic_merged(dim_resources, query, context, model):
     """
     from claude_agent_sdk import query as sdk_query
     from claude_agent_sdk import ClaudeAgentOptions
-    from claude_agent_sdk.types import AssistantMessage, ResultMessage
+    from claude_agent_sdk.types import ResultMessage
 
     # Build one prompt with all catalogs
     sections = []
@@ -175,10 +182,23 @@ async def recall_agentic_merged(dim_resources, query, context, model):
     prompt_parts.append(f"\nQuery: {query}")
     agentic_prompt = "\n".join(prompt_parts)
 
+    dim_schemas = {}
+    for dim, _ in dim_resources:
+        dim_schemas[dim] = _MEMORY_SCHEMA if dim == "memory" else _ITEMS_SCHEMA
+    merged_output_format = {
+        "type": "json_schema",
+        "schema": {
+            "type": "object",
+            "properties": dim_schemas,
+            "required": list(dim_schemas.keys()),
+        },
+    }
+
     options = ClaudeAgentOptions(
         system_prompt=MERGED_SYSTEM_PROMPT,
         model=model,
         tools=[],
+        output_format=merged_output_format,
         settings='{"disableAllHooks": true}',
         env={"CLAUDECODE": "", "CLAUDE_AGENT_SDK_SKIP_VERSION_CHECK": "1"},
         effort="low",
@@ -186,27 +206,20 @@ async def recall_agentic_merged(dim_resources, query, context, model):
         extra_args={"no-session-persistence": None},
     )
 
-    result_text = ""
+    parsed = None
     usage = {}
     async for msg in sdk_query(prompt=agentic_prompt, options=options):
-        if isinstance(msg, AssistantMessage):
-            for block in msg.content:
-                if hasattr(block, "text"):
-                    result_text += block.text
-        elif isinstance(msg, ResultMessage):
+        if isinstance(msg, ResultMessage):
             usage = {
                 "input_tokens": msg.usage.get("input_tokens", 0) if msg.usage else 0,
                 "output_tokens": msg.usage.get("output_tokens", 0) if msg.usage else 0,
                 "cost_usd": msg.total_cost_usd or 0,
                 "duration_api_ms": msg.duration_api_ms,
             }
+            parsed = msg.structured_output
 
-    assert result_text, "Empty response from merged agentic recall"
-
-    clean = re.sub(r"```json?\s*", "", result_text)
-    clean = re.sub(r"```", "", clean).strip()
-    decoder = json.JSONDecoder()
-    parsed, _ = decoder.raw_decode(clean)
+    if not parsed:
+        return {}
 
     # Parse per-dimension results
     results = {}
