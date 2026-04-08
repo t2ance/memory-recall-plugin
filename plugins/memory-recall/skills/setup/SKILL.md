@@ -59,18 +59,40 @@ Recommend starting with `memory: agentic` and one or two other dimensions on `ag
 ## Step 3: Backend-specific options
 
 **If any dimension uses `agentic`:**
-- `model`: Which model? Options: `haiku` (fast/cheap, recommended), `sonnet` (smarter but costlier). Default: `haiku`.
-- `agentic_mode`: `parallel` (one Haiku call per dimension, better quality) or `merged` (single call for all, faster). Default: `parallel`.
+- `model`: Which model? Options: `haiku` (fast/cheap, recommended), `sonnet` (smarter but costlier), `opus` (most capable, most expensive). Default: `haiku`.
+- `agentic_mode`: `parallel` (one call per dimension, better quality) or `merged` (single call for all, faster). Default: `parallel`.
 
 **Per-dimension granularity (ask if user wants fine-grained control):**
 
 Each dimension has independent input and output granularity:
-- `{dim}_input`: What the selection backend sees. `title_desc` (name+description) or `full` (file content). Default: `title_desc`.
-- `{dim}_output`: What gets injected into main model. `title_desc` or `full` (file content). Default: `full` for memory, `title_desc` for others.
+- `{dim}_input`: What the selection backend (Haiku/embedding) sees when choosing resources.
+- `{dim}_output`: What gets injected into the main model's context after selection.
+
+Both accept `title_desc` or `full`:
+
+| Value | As input (what selector sees) | As output (what main model gets) |
+|-------|-------------------------------|----------------------------------|
+| `title_desc` | Resource name + one-line description | Name + reason (from Haiku's recommendation) |
+| `full` | File content (truncated to 500 chars) | Full file content injected into context |
+
+Concrete examples:
+- `memory_output: full` (default) = selected memory files are **read in full** and injected
+- `memory_output: title_desc` = only file paths injected, model must Read files itself
+- `skills_output: full` = selected skills' SKILL.md content injected
+- `skills_output: title_desc` (default) = only skill name + recommendation reason
+
+Defaults: all `{dim}_input` default to `title_desc`. `memory_output` defaults to `full`, all others to `title_desc`.
 
 All 8 configs: `memory_input`, `memory_output`, `skills_input`, `skills_output`, `tools_input`, `tools_output`, `agents_input`, `agents_output`.
 
-Note: `reminder` backend ignores `input` (it returns everything, no selection step). `embedding` memory ignores `input` (daemon always searches file content).
+**N/A combinations** (setting has no effect):
+
+| Backend | `{dim}_input` | `{dim}_output` |
+|---------|---------------|----------------|
+| `reminder` | N/A (no selection step, returns everything) | Works |
+| `agentic` | Works | Works |
+| `embedding` (memory) | N/A (daemon always searches full content) | Works |
+| `embedding` (non-memory) | Works | Works |
 
 **If any dimension uses `embedding`:**
 - `embedding_model`: HuggingFace model name. Default: `intfloat/multilingual-e5-small`.
@@ -82,7 +104,7 @@ Note: `reminder` backend ignores `input` (it returns everything, no selection st
 **Shared options (ask for any non-off dimension):**
 - `context_messages`: Recent conversation messages for search context (0-20). Default: `5`.
 - `context_max_chars`: Max chars of context (0-10000). Default: `2000`.
-- `max_content_chars`: Global cap on total injected content across all dimensions (1000-10000). Default: `9000`.
+- `max_content_chars`: Global cap on total injected content across all dimensions (1000-10000). Default: `9000`. This is a shared budget -- dimensions are processed in order (memory, skills, tools, agents), and each dimension's output decrements the remaining budget. If memory uses 7000 chars, only 2000 chars remain for the other dimensions.
 
 Only ask about options the user wants to customize. Defaults are fine for most users.
 
