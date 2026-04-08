@@ -128,3 +128,13 @@ If any dimension uses `embedding`:
 ## Step 7: Summary
 
 Show configured dimensions and backends. Remind user to restart session or `/reload-plugins` for changes to take effect.
+
+## Troubleshooting
+
+If something isn't working, read the DIAGNOSIS.md file in the plugin root for symptom-based troubleshooting. Key first step: read the latest recall log entry:
+
+```bash
+tail -30 ~/.claude/plugins/data/memory-recall-memory-recall/recall.jsonl
+```
+
+The log shows: which dimensions ran, what was discovered, what was selected, timing, cost, and the full output. Most issues can be diagnosed from this alone.

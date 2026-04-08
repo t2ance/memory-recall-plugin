@@ -132,6 +132,16 @@ skills/
   setup/SKILL.md        # Interactive config
 ```
 
+## Troubleshooting
+
+See [DIAGNOSIS.md](plugins/memory-recall/DIAGNOSIS.md) for symptom-based troubleshooting covering: hook not triggering, empty results, agentic timeouts, granularity issues, cache sync problems, SubagentStart issues, embedding daemon errors, and more.
+
+Quick check -- read the last recall log entry:
+
+```bash
+tail -30 ~/.claude/plugins/data/memory-recall-memory-recall/recall.jsonl
+```
+
 ## Updating
 
 ```bash
