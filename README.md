@@ -146,8 +146,15 @@ tail -30 ~/.claude/plugins/data/memory-recall-memory-recall/recall.jsonl
 
 ## Updating
 
+Must update the marketplace first, then re-install:
+
 ```bash
+claude plugin marketplace update memory-recall
 claude plugin install memory-recall@memory-recall
 ```
+
+`plugin install` copies from the local marketplace cache, not from GitHub directly. Without `marketplace update` first, it re-installs the old cached version.
+
+Note: `claude plugin update` does NOT work for same-version code changes -- it compares the `version` field in `plugin.json` and skips if unchanged.
 
 After updating, run `/reload-plugins` to refresh without restarting the session.
