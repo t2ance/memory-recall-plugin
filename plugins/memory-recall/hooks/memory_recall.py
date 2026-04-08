@@ -12,12 +12,12 @@ import asyncio
 import json
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from backends import (
     ensure_daemon_running,
-    extract_context,
     recall_agentic,
     recall_agentic_merged,
     recall_embedding_generic,
@@ -25,56 +25,18 @@ from backends import (
     recall_reminder,
 )
 from discover import discover_agents, discover_memory, discover_skills, discover_tools
+from utils import (
+    DATA_DIR, PLUGIN_ROOT, SOCKET_PATH,
+    extract_agent_prompt, extract_context,
+    load_plugin_config as load_config,
+    write_log,
+)
 
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 
 DIMENSIONS = ["memory", "skills", "tools", "agents"]
-
-HOME = os.path.expanduser("~")
-DATA_DIR = os.environ.get(
-    "CLAUDE_PLUGIN_DATA",
-    os.path.join(HOME, ".claude/plugins/data/memory-recall-memory-recall"),
-)
-PLUGIN_ROOT = os.environ.get(
-    "CLAUDE_PLUGIN_ROOT",
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-)
-SOCKET_PATH = os.path.join(DATA_DIR, "daemon.sock")
-
-
-def load_config():
-    return {
-        # Per-dimension backend: off | reminder | agentic | embedding
-        "memory": os.environ.get("CLAUDE_PLUGIN_OPTION_MEMORY", "reminder"),
-        "skills": os.environ.get("CLAUDE_PLUGIN_OPTION_SKILLS", "off"),
-        "tools": os.environ.get("CLAUDE_PLUGIN_OPTION_TOOLS", "off"),
-        "agents": os.environ.get("CLAUDE_PLUGIN_OPTION_AGENTS", "off"),
-        # Shared options
-        "agentic_mode": os.environ.get("CLAUDE_PLUGIN_OPTION_AGENTIC_MODE", "parallel"),  # parallel | merged
-        # Per-dimension granularity
-        "memory_input": os.environ.get("CLAUDE_PLUGIN_OPTION_MEMORY_INPUT", "title_desc"),
-        "memory_output": os.environ.get("CLAUDE_PLUGIN_OPTION_MEMORY_OUTPUT", "full"),
-        "skills_input": os.environ.get("CLAUDE_PLUGIN_OPTION_SKILLS_INPUT", "title_desc"),
-        "skills_output": os.environ.get("CLAUDE_PLUGIN_OPTION_SKILLS_OUTPUT", "title_desc"),
-        "tools_input": os.environ.get("CLAUDE_PLUGIN_OPTION_TOOLS_INPUT", "title_desc"),
-        "tools_output": os.environ.get("CLAUDE_PLUGIN_OPTION_TOOLS_OUTPUT", "title_desc"),
-        "agents_input": os.environ.get("CLAUDE_PLUGIN_OPTION_AGENTS_INPUT", "title_desc"),
-        "agents_output": os.environ.get("CLAUDE_PLUGIN_OPTION_AGENTS_OUTPUT", "title_desc"),
-        "model": os.environ.get("CLAUDE_PLUGIN_OPTION_MODEL", "haiku"),
-        "context_messages": int(os.environ.get("CLAUDE_PLUGIN_OPTION_CONTEXT_MESSAGES", "5")),
-        "context_max_chars": int(os.environ.get("CLAUDE_PLUGIN_OPTION_CONTEXT_MAX_CHARS", "2000")),
-        "max_content_chars": int(os.environ.get("CLAUDE_PLUGIN_OPTION_MAX_CONTENT_CHARS", "9000")),
-        # Embedding-specific
-        "embedding_model": os.environ.get("CLAUDE_PLUGIN_OPTION_EMBEDDING_MODEL", "intfloat/multilingual-e5-small"),
-        "embedding_python": os.path.expanduser(
-            os.environ.get("CLAUDE_PLUGIN_OPTION_EMBEDDING_PYTHON", "~/miniconda3/envs/memory-recall/bin/python")
-        ),
-        "embedding_threshold": float(os.environ.get("CLAUDE_PLUGIN_OPTION_EMBEDDING_THRESHOLD", "0.85")),
-        "embedding_top_k": int(os.environ.get("CLAUDE_PLUGIN_OPTION_EMBEDDING_TOP_K", "3")),
-        "embedding_device": os.environ.get("CLAUDE_PLUGIN_OPTION_EMBEDDING_DEVICE", "cpu"),
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -273,14 +235,6 @@ def merge_results(results, proj_mem_dir, global_mem_dir, max_chars, config=None,
 # ---------------------------------------------------------------------------
 
 
-def write_log(entry):
-    """Append a structured JSON log entry to the recall log file."""
-    log_path = os.path.join(DATA_DIR, "recall.jsonl")
-    os.makedirs(DATA_DIR, exist_ok=True)
-    with open(log_path, "a") as f:
-        f.write(json.dumps(entry, indent=2, ensure_ascii=False) + "\n\n")
-
-
 def summarize_result(dim, result):
     """Extract a compact summary of a single dimension's result for logging."""
     if result is None:
@@ -290,26 +244,6 @@ def summarize_result(dim, result):
     if result.get("type") == "recommendations":
         return {"dim": dim, "status": "ok", "items": [i["name"] for i in result["items"]]}
     return {"dim": dim, "status": "unknown"}
-
-
-def extract_agent_prompt(transcript_path, max_lines=100):
-    """Extract the last Agent tool_use prompt from the main agent's transcript."""
-    import subprocess
-    result = subprocess.run(
-        ["tail", "-n", str(max_lines), transcript_path],
-        capture_output=True, text=True, timeout=2,
-    )
-    assert result.returncode == 0, f"tail failed: {result.stderr}"
-    for line in reversed(result.stdout.strip().split("\n")):
-        if not line:
-            continue
-        msg = json.loads(line)
-        if msg.get("type") != "assistant":
-            continue
-        for block in msg.get("message", {}).get("content", []):
-            if block.get("type") == "tool_use" and block.get("name") == "Agent":
-                return block["input"]["prompt"]
-    return ""
 
 
 def main():

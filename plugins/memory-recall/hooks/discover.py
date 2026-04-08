@@ -12,24 +12,7 @@ import json
 import os
 
 from constants import BUILTIN_AGENTS, BUILTIN_SKILLS, DEFERRED_TOOLS
-
-HOME = os.path.expanduser("~")
-
-
-def _parse_frontmatter(path):
-    with open(path) as f:
-        content = f.read(2000)
-    if not content.startswith("---"):
-        return {}
-    end = content.find("---", 3)
-    if end == -1:
-        return {}
-    result = {}
-    for line in content[3:end].strip().split("\n"):
-        if ":" in line:
-            key, _, value = line.partition(":")
-            result[key.strip()] = value.strip().strip('"').strip("'")
-    return result
+from utils import parse_frontmatter as _parse_frontmatter, HOME
 
 
 # -- Memory ------------------------------------------------------------------
