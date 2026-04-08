@@ -254,3 +254,18 @@ Run these 5 checks first to get a baseline:
 - Skills/agents parse failures: bad frontmatter.
 
 **Important:** Errors are often from OTHER plugins, not memory-recall. Check which plugin each error references.
+
+### 12. Last resort: reinstall plugin
+
+If all other diagnostics fail and the plugin is still broken (especially CLI subprocess crashes like `Command failed with exit code 1` from Agent SDK), try a full reinstall:
+
+```bash
+claude plugin marketplace update memory-recall
+claude plugin install memory-recall@memory-recall
+```
+
+Both steps are required in this order. `marketplace update` does `git pull` on the local marketplace clone. `plugin install` re-copies from the updated marketplace to the versioned cache. Without `marketplace update` first, `plugin install` just re-copies stale code.
+
+Note: `claude plugin update` does NOT work for same-version code changes -- it compares the `version` field in `plugin.json` and skips if unchanged.
+
+After reinstalling, run `/reload-plugins` in the active session.
