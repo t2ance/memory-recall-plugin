@@ -9,7 +9,7 @@ Multi-dimension context recall for Claude Code. Automatically surfaces relevant 
 - **Parallel execution**: all agentic calls run concurrently via Agent SDK
 - **Structured logging**: JSONL with precise token/cost from Agent SDK ResultMessage
 - **Auto-discovery**: scans plugin cache for skills/agents/MCP servers, falls back to hardcoded for CC built-ins
-- **3 skills**: `/dream` (memory consolidation), `/remember` (quick save), `/setup` (interactive config)
+- **4 skills**: `/dream` (consolidation), `/remember` (quick save), `/setup` (config), `/diagnose` (troubleshooting)
 
 ## Installation
 
@@ -104,6 +104,7 @@ Every hook invocation logs to `~/.claude/plugins/data/memory-recall-memory-recal
 - **`/dream`** -- Full memory consolidation across project memory, global memory, and `~/.claude/CLAUDE.md`
 - **`/remember`** -- Quick save from current conversation to memory
 - **`/setup`** -- Interactive configuration wizard for dimensions and backends
+- **`/diagnose`** -- Interactive troubleshooting (11 scenarios, runs targeted checks)
 
 ## Embedding Backend Setup
 
@@ -130,11 +131,12 @@ skills/
   dream/SKILL.md        # Memory consolidation
   remember/SKILL.md     # Quick save
   setup/SKILL.md        # Interactive config
+  diagnose/SKILL.md     # Interactive troubleshooting
 ```
 
 ## Troubleshooting
 
-See [DIAGNOSIS.md](plugins/memory-recall/DIAGNOSIS.md) for symptom-based troubleshooting covering: hook not triggering, empty results, agentic timeouts, granularity issues, cache sync problems, SubagentStart issues, embedding daemon errors, and more.
+Run `/diagnose` for interactive troubleshooting. It covers: hook not triggering, empty results, agentic timeouts, granularity issues, cache sync problems, SubagentStart issues, embedding daemon errors, and more.
 
 Quick check -- read the last recall log entry:
 
