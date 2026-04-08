@@ -73,7 +73,7 @@ AGENTIC_SCHEMAS = {
 }
 
 
-async def recall_agentic(dim, resources, query, context, model, input_granularity="title_desc"):
+async def recall_agentic(dim, resources, query, context, model, input_granularity="title_desc", effort="low"):
     """Use Agent SDK + Haiku to select relevant resources.
 
     Returns (result_dict, usage_dict) where usage_dict contains token counts and cost.
@@ -108,17 +108,19 @@ async def recall_agentic(dim, resources, query, context, model, input_granularit
     prompt_parts.append(f"\nQuery: {query}")
     agentic_prompt = "\n".join(prompt_parts)
 
-    options = ClaudeAgentOptions(
+    kwargs = dict(
         system_prompt=AGENTIC_SYSTEM_PROMPTS[dim],
         model=model,
         tools=[],
         output_format=AGENTIC_SCHEMAS[dim],
         settings='{"disableAllHooks": true}',
         env={"CLAUDECODE": "", "CLAUDE_AGENT_SDK_SKIP_VERSION_CHECK": "1"},
-        effort="low",
         max_budget_usd=0.01,
         extra_args={"no-session-persistence": None},
     )
+    if effort:
+        kwargs["effort"] = effort
+    options = ClaudeAgentOptions(**kwargs)
 
     parsed = None
     usage = {}
@@ -157,7 +159,7 @@ MERGED_SYSTEM_PROMPT = (
 )
 
 
-async def recall_agentic_merged(dim_resources, query, context, model):
+async def recall_agentic_merged(dim_resources, query, context, model, effort="low"):
     """Single Haiku call for all dimensions. Returns {dim: (result, usage)}.
 
     dim_resources: [(dim, resources), ...] for each enabled agentic dimension.
@@ -194,17 +196,19 @@ async def recall_agentic_merged(dim_resources, query, context, model):
         },
     }
 
-    options = ClaudeAgentOptions(
+    kwargs = dict(
         system_prompt=MERGED_SYSTEM_PROMPT,
         model=model,
         tools=[],
         output_format=merged_output_format,
         settings='{"disableAllHooks": true}',
         env={"CLAUDECODE": "", "CLAUDE_AGENT_SDK_SKIP_VERSION_CHECK": "1"},
-        effort="low",
         max_budget_usd=0.02,
         extra_args={"no-session-persistence": None},
     )
+    if effort:
+        kwargs["effort"] = effort
+    options = ClaudeAgentOptions(**kwargs)
 
     parsed = None
     usage = {}

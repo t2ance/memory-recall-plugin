@@ -59,7 +59,7 @@ async def dispatch_one(dim, backend, resources, query, context, config, memory_d
 
     elif backend == "agentic":
         input_gran = config.get(f"{dim}_input", "title_desc")
-        result, usage = await recall_agentic(dim, resources, query, context, config["model"], input_gran)
+        result, usage = await recall_agentic(dim, resources, query, context, config["model"], input_gran, config.get("recall_effort", "low"))
 
     elif backend == "embedding":
         ensure_daemon_running(
@@ -100,7 +100,7 @@ async def run_all(tasks, query, context, config, memory_dirs):
         # Single Haiku call for all agentic dimensions
         t0 = _time.time()
         merged_results = await recall_agentic_merged(
-            agentic_tasks, query, context, config["model"]
+            agentic_tasks, query, context, config["model"], config.get("recall_effort", "low")
         )
         elapsed = round(_time.time() - t0, 2)
         # Convert to standard (dim, result, elapsed, usage) tuples

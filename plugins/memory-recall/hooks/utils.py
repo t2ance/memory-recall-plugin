@@ -73,6 +73,9 @@ def load_plugin_config():
         "auto_save_enabled": os.environ.get("CLAUDE_PLUGIN_OPTION_AUTO_SAVE_ENABLED", "true") != "false",
         "auto_save_targets": os.environ.get("CLAUDE_PLUGIN_OPTION_AUTO_SAVE_TARGETS", "native"),
         "auto_save_context_turns": int(os.environ.get("CLAUDE_PLUGIN_OPTION_AUTO_SAVE_CONTEXT_TURNS", "3")),
+        # Effort: "low" is cheaper/faster but incompatible with complex structured output
+        "recall_effort": os.environ.get("CLAUDE_PLUGIN_OPTION_RECALL_EFFORT", "low"),
+        "auto_save_effort": os.environ.get("CLAUDE_PLUGIN_OPTION_AUTO_SAVE_EFFORT", ""),  # empty = default (no effort param)
     }
 
 
@@ -199,17 +202,17 @@ def extract_context(transcript_path, context_messages, context_max_chars):
 # Agent SDK wrapper
 # ---------------------------------------------------------------------------
 
-async def call_sdk_haiku(prompt, system_prompt, output_schema, model="haiku", max_budget_usd=0.02):
+async def call_sdk_haiku(prompt, system_prompt, output_schema, model="haiku", max_budget_usd=0.02, effort=""):
     """Call Haiku via Agent SDK with structured output.
 
     Returns (parsed_json_or_None, usage_dict).
-    Uses ResultMessage.structured_output (requires effort != "low").
+    Note: effort="low" is incompatible with complex structured output schemas.
     """
     from claude_agent_sdk import query as sdk_query
     from claude_agent_sdk import ClaudeAgentOptions
     from claude_agent_sdk.types import ResultMessage
 
-    options = ClaudeAgentOptions(
+    kwargs = dict(
         system_prompt=system_prompt,
         model=model,
         tools=[],
@@ -219,6 +222,10 @@ async def call_sdk_haiku(prompt, system_prompt, output_schema, model="haiku", ma
         max_budget_usd=max_budget_usd,
         extra_args={"no-session-persistence": None},
     )
+    if effort:
+        kwargs["effort"] = effort
+
+    options = ClaudeAgentOptions(**kwargs)
 
     parsed = None
     usage = {}

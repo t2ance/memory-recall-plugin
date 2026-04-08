@@ -170,6 +170,18 @@
       "description": "'native' (CC project memory), 'global' (plugin global-memory), or 'both'",
       "default": "native"
     },
+    "recall_effort": {
+      "type": "string",
+      "title": "Recall Effort",
+      "description": "Effort level for recall agentic calls: 'low' (faster/cheaper) or '' (default). Low works for simple schemas.",
+      "default": "low"
+    },
+    "auto_save_effort": {
+      "type": "string",
+      "title": "Auto-Save Effort",
+      "description": "Effort level for auto-save calls: '' (default, required for complex structured output) or 'low'. Note: 'low' breaks structured output with complex schemas.",
+      "default": ""
+    },
     "auto_save_context_turns": {
       "type": "number",
       "title": "Auto-Save Context Turns",

@@ -268,7 +268,8 @@ def main():
     prompt = build_prompt(turns, memory_entries)
     t_haiku = time.time()
     parsed, usage = asyncio.run(
-        call_sdk_haiku(prompt, SYSTEM_PROMPT, AUTO_SAVE_SCHEMA, config["model"], max_budget_usd=0.03)
+        call_sdk_haiku(prompt, SYSTEM_PROMPT, AUTO_SAVE_SCHEMA, config["model"],
+                       max_budget_usd=0.03, effort=config["auto_save_effort"])
     )
     haiku_s = round(time.time() - t_haiku, 2)
 
