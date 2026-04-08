@@ -1,7 +1,7 @@
 {
   "name": "memory-recall",
-  "version": "3.0.0",
-  "description": "Multi-dimension recall: memory, skills, tools, agent types. Each dimension independently configurable with reminder, agentic (Haiku), or embedding backend.",
+  "version": "3.1.0",
+  "description": "Multi-dimension recall + auto-save. Recall: memory, skills, tools, agent types with reminder/agentic/embedding backends. Auto-save: Stop hook analyzes each turn and persists valuable knowledge via Haiku CRUD.",
   "author": {
     "name": "peijia"
   },
@@ -157,6 +157,26 @@
       "default": 9000,
       "min": 1000,
       "max": 10000
+    },
+    "auto_save_enabled": {
+      "type": "boolean",
+      "title": "Auto-Save Enabled",
+      "description": "Enable automatic memory saving after each assistant turn (Stop hook). Haiku analyzes conversations and persists valuable knowledge.",
+      "default": true
+    },
+    "auto_save_targets": {
+      "type": "string",
+      "title": "Auto-Save Targets",
+      "description": "'native' (CC project memory), 'global' (plugin global-memory), or 'both'",
+      "default": "native"
+    },
+    "auto_save_context_turns": {
+      "type": "number",
+      "title": "Auto-Save Context Turns",
+      "description": "Number of recent conversation turns to provide to Haiku for analysis",
+      "default": 3,
+      "min": 1,
+      "max": 10
     }
   }
 }
