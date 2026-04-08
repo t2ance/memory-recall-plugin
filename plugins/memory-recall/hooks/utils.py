@@ -200,14 +200,10 @@ def extract_context(transcript_path, context_messages, context_max_chars):
 # ---------------------------------------------------------------------------
 
 async def call_sdk_haiku(prompt, system_prompt, output_schema, model="haiku", max_budget_usd=0.02):
-    """Call Haiku via Agent SDK with robust response extraction.
+    """Call Haiku via Agent SDK with structured output.
 
     Returns (parsed_json_or_None, usage_dict).
-
-    Extraction layers:
-    1. ResultMessage.structured_output (SDK native)
-    2. ResultMessage.result (text -> JSON parse)
-    3. AssistantMessage.content[].text (TextBlock -> JSON parse)
+    Uses ResultMessage.structured_output (requires effort != "low").
     """
     from claude_agent_sdk import query as sdk_query
     from claude_agent_sdk import ClaudeAgentOptions
@@ -220,24 +216,14 @@ async def call_sdk_haiku(prompt, system_prompt, output_schema, model="haiku", ma
         output_format=output_schema,
         settings='{"disableAllHooks": true}',
         env={"CLAUDECODE": "", "CLAUDE_AGENT_SDK_SKIP_VERSION_CHECK": "1"},
-        effort="low",
         max_budget_usd=max_budget_usd,
         extra_args={"no-session-persistence": None},
     )
 
     parsed = None
     usage = {}
-    assistant_texts = []
 
     async for msg in sdk_query(prompt=prompt, options=options):
-        msg_type = type(msg).__name__
-
-        # Layer 3: capture text from AssistantMessage.content (list of TextBlock)
-        if msg_type == "AssistantMessage":
-            for block in getattr(msg, "content", []):
-                if hasattr(block, "text"):
-                    assistant_texts.append(block.text)
-
         if isinstance(msg, ResultMessage):
             usage = {
                 "input_tokens": msg.usage.get("input_tokens", 0) if msg.usage else 0,
@@ -245,16 +231,7 @@ async def call_sdk_haiku(prompt, system_prompt, output_schema, model="haiku", ma
                 "cost_usd": msg.total_cost_usd or 0,
                 "duration_api_ms": msg.duration_api_ms,
             }
-            # Layer 1: structured output
             parsed = msg.structured_output
-            # Layer 2: result text
-            if parsed is None and msg.result:
-                parsed = parse_json(msg.result)
-
-    # Layer 3: assistant message text fallback
-    if parsed is None and assistant_texts:
-        combined = "\n".join(assistant_texts)
-        parsed = parse_json(combined)
 
     return parsed, usage
 
