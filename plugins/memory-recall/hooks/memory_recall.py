@@ -28,7 +28,7 @@ from discover import discover_agents, discover_memory, discover_skills, discover
 from utils import (
     DATA_DIR, PLUGIN_ROOT, SOCKET_PATH,
     extract_agent_prompt, extract_context,
-    hook_main,
+    hook_main, maybe_go_async,
     load_plugin_config as load_config,
     write_log,
 )
@@ -250,6 +250,9 @@ def main():
 
     hook_input = json.loads(sys.stdin.read())
     event = hook_input.get("hook_event_name", "UserPromptSubmit")
+
+    config = load_config()
+    maybe_go_async("recall_async", config)
     cwd = hook_input.get("cwd", "")
     transcript_path = hook_input.get("transcript_path", "")
 

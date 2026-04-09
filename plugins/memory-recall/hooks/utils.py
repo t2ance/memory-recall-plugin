@@ -37,6 +37,13 @@ def write_log(entry):
         f.write(json.dumps(entry, indent=2, ensure_ascii=False) + "\n\n")
 
 
+def maybe_go_async(config_key, config):
+    """If config_key is truthy, emit dynamic async signal so CC backgrounds this hook."""
+    if config.get(config_key, False):
+        print(json.dumps({"async": True}))
+        sys.stdout.flush()
+
+
 def hook_main(fn):
     """Unified hook entry point: crash logging."""
     try:
@@ -101,6 +108,10 @@ def load_plugin_config():
         "pp_max_tool_output_chars": int(os.environ.get("CLAUDE_PLUGIN_OPTION_PP_MAX_TOOL_OUTPUT_CHARS", "1000")),
         "pp_max_recall_files": int(os.environ.get("CLAUDE_PLUGIN_OPTION_PP_MAX_RECALL_FILES", "5")),
         "pp_max_memory_file_chars": int(os.environ.get("CLAUDE_PLUGIN_OPTION_PP_MAX_MEMORY_FILE_CHARS", "2000")),
+        # Async mode per hook
+        "recall_async": os.environ.get("CLAUDE_PLUGIN_OPTION_RECALL_ASYNC", "false") != "false",
+        "memory_save_async": os.environ.get("CLAUDE_PLUGIN_OPTION_MEMORY_SAVE_ASYNC", "true") != "false",
+        "pp_async": os.environ.get("CLAUDE_PLUGIN_OPTION_PP_ASYNC", "true") != "false",
     }
 
 

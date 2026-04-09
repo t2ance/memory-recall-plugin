@@ -21,7 +21,7 @@ from utils import (
     DATA_DIR,
     call_sdk_haiku,
     extract_context,
-    hook_main,
+    hook_main, maybe_go_async,
     load_plugin_config,
     parse_frontmatter,
     write_log,
@@ -299,6 +299,7 @@ def main():
         return
 
     config = load_plugin_config()
+    maybe_go_async("pp_async", config)
 
     if not should_evaluate(hook_input, config):
         return

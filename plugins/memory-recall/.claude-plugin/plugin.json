@@ -271,6 +271,24 @@
       "default": 2000,
       "min": 500,
       "max": 10000
+    },
+    "recall_async": {
+      "type": "boolean",
+      "title": "Recall Async",
+      "description": "Run recall hook (UserPromptSubmit/SubagentStart) asynchronously. Default false (sync) because recall must inject context before agent responds.",
+      "default": false
+    },
+    "memory_save_async": {
+      "type": "boolean",
+      "title": "Memory Save Async",
+      "description": "Run memory save hook (Stop) asynchronously. Default true -- save doesn't need to block.",
+      "default": true
+    },
+    "pp_async": {
+      "type": "boolean",
+      "title": "Pair Programmer Async",
+      "description": "Run pair programmer hook (PostToolUse) asynchronously. Default true -- feedback arrives at next tool call instead of blocking current one.",
+      "default": true
     }
   }
 }

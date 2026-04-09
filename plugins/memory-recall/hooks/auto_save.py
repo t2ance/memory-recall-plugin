@@ -19,7 +19,7 @@ from utils import (
     call_sdk_haiku,
     compute_memory_dirs,
     extract_messages,
-    hook_main,
+    hook_main, maybe_go_async,
     load_plugin_config,
     parse_frontmatter,
     read_memory_files,
@@ -234,6 +234,7 @@ def main():
         return
 
     config = load_plugin_config()
+    maybe_go_async("memory_save_async", config)
     if not config["auto_save_enabled"]:
         return
 
