@@ -278,9 +278,11 @@ def main():
     haiku_s = round(time.time() - t_haiku, 2)
 
     if not parsed:
+        elapsed = round(time.time() - t_start, 2)
         write_log({"event": "auto_save", "status": "no_response",
-                    "haiku_s": haiku_s, "elapsed_s": round(time.time() - t_start, 2),
+                    "haiku_s": haiku_s, "elapsed_s": elapsed,
                     "usage": usage})
+        print(json.dumps({"systemMessage": f"Memory save: no response | {elapsed}s"}))
         return
 
     actions = parsed.get("actions", [])
@@ -303,10 +305,13 @@ def main():
         "elapsed_s": round(time.time() - t_start, 2),
     })
 
-    # User-visible summary (only when actions were executed)
+    # User-visible summary
+    elapsed = round(time.time() - t_start, 2)
     if executed:
         parts = [f"{a['action']} {a['file']}" for a in executed]
-        print(json.dumps({"systemMessage": f"Auto-saved: {', '.join(parts)}"}))
+        print(json.dumps({"systemMessage": f"Memory save: {', '.join(parts)} | {elapsed}s"}))
+    else:
+        print(json.dumps({"systemMessage": f"Memory save: nothing to save | {elapsed}s"}))
 
 
 if __name__ == "__main__":
