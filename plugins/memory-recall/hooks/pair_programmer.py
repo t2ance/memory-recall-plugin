@@ -178,17 +178,21 @@ def build_trajectory(hook_input, config):
 
     # Current tool call
     tool_name = hook_input.get("tool_name", "")
-    tool_input = hook_input.get("tool_input", "")
-    tool_output = hook_input.get("tool_output", "")
+    raw_input = hook_input.get("tool_input", "")
+    raw_output = hook_input.get("tool_response", "")
+
+    # Serialize if not already string
+    tool_input_str = raw_input if isinstance(raw_input, str) else json.dumps(raw_input, indent=2, ensure_ascii=False)
+    tool_output_str = raw_output if isinstance(raw_output, str) else json.dumps(raw_output, indent=2, ensure_ascii=False)
 
     # Truncate large values
-    if len(tool_input) > 2000:
-        tool_input = tool_input[:2000] + "\n...(truncated)"
-    if len(tool_output) > 1000:
-        tool_output = tool_output[:1000] + "\n...(truncated)"
+    if len(tool_input_str) > 2000:
+        tool_input_str = tool_input_str[:2000] + "\n...(truncated)"
+    if len(tool_output_str) > 1000:
+        tool_output_str = tool_output_str[:1000] + "\n...(truncated)"
 
     parts.append(
-        f"## Current Action\nTool: {tool_name}\nInput:\n{tool_input}\nOutput:\n{tool_output}"
+        f"## Current Action\nTool: {tool_name}\nInput:\n{tool_input_str}\nOutput:\n{tool_output_str}"
     )
 
     return "\n\n".join(parts)
