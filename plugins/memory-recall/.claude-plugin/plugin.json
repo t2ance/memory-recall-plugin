@@ -214,9 +214,9 @@
       "type": "number",
       "title": "Pair Programmer Cooldown (seconds)",
       "description": "Minimum seconds between evaluations. Prevents rapid-fire during batch edits.",
-      "default": 0,
+      "default": 120,
       "min": 0,
-      "max": 60
+      "max": 600
     },
     "pp_context_messages": {
       "type": "number",

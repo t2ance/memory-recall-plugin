@@ -100,7 +100,7 @@ def load_plugin_config():
         "pp_enabled": os.environ.get("CLAUDE_PLUGIN_OPTION_PP_ENABLED", "false") != "false",
         "pp_model": os.environ.get("CLAUDE_PLUGIN_OPTION_PP_MODEL", "haiku"),
         "pp_sample_rate": float(os.environ.get("CLAUDE_PLUGIN_OPTION_PP_SAMPLE_RATE", "1.0")),
-        "pp_cooldown_s": float(os.environ.get("CLAUDE_PLUGIN_OPTION_PP_COOLDOWN_S", "0")),
+        "pp_cooldown_s": float(os.environ.get("CLAUDE_PLUGIN_OPTION_PP_COOLDOWN_S", "120")),
         "pp_context_messages": int(os.environ.get("CLAUDE_PLUGIN_OPTION_PP_CONTEXT_MESSAGES", "5")),
         "pp_context_max_chars": int(os.environ.get("CLAUDE_PLUGIN_OPTION_PP_CONTEXT_MAX_CHARS", "3000")),
         "pp_effort": os.environ.get("CLAUDE_PLUGIN_OPTION_PP_EFFORT", ""),
