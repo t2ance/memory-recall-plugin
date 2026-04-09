@@ -77,7 +77,7 @@ def discover_skills():
                 if not os.path.isdir(plugin_dir):
                     continue
                 # Find the latest version directory or direct skills dir
-                skills_dir = _find_skills_dir(plugin_dir)
+                skills_dir = _find_versioned_subdir(plugin_dir, "skills")
                 if not skills_dir:
                     continue
                 for skill_name in os.listdir(skills_dir):
@@ -104,16 +104,14 @@ def discover_skills():
     return entries
 
 
-def _find_skills_dir(plugin_dir):
-    """Find the skills directory within a plugin version directory."""
-    # Direct skills/ under plugin dir
-    direct = os.path.join(plugin_dir, "skills")
+def _find_versioned_subdir(plugin_dir, subdir_name):
+    """Find a subdirectory within a plugin, handling versioned layouts."""
+    direct = os.path.join(plugin_dir, subdir_name)
     if os.path.isdir(direct):
         return direct
-    # Versioned: find latest version subdir with skills/
     versions = []
     for entry in os.listdir(plugin_dir):
-        entry_path = os.path.join(plugin_dir, entry, "skills")
+        entry_path = os.path.join(plugin_dir, entry, subdir_name)
         if os.path.isdir(entry_path):
             versions.append((entry, entry_path))
     if versions:
@@ -265,7 +263,7 @@ def discover_agents(cwd):
                 plugin_dir = os.path.join(mp_dir, plugin)
                 if not os.path.isdir(plugin_dir):
                     continue
-                agents_dir = _find_agents_dir(plugin_dir)
+                agents_dir = _find_versioned_subdir(plugin_dir, "agents")
                 if not agents_dir:
                     continue
                 for fname in os.listdir(agents_dir):
@@ -292,17 +290,3 @@ def discover_agents(cwd):
     return entries
 
 
-def _find_agents_dir(plugin_dir):
-    """Find the agents directory within a plugin version directory."""
-    direct = os.path.join(plugin_dir, "agents")
-    if os.path.isdir(direct):
-        return direct
-    versions = []
-    for entry in os.listdir(plugin_dir):
-        entry_path = os.path.join(plugin_dir, entry, "agents")
-        if os.path.isdir(entry_path):
-            versions.append((entry, entry_path))
-    if versions:
-        versions.sort(reverse=True)
-        return versions[0][1]
-    return None

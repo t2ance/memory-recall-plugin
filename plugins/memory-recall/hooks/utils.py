@@ -28,11 +28,24 @@ SOCKET_PATH = os.path.join(DATA_DIR, "daemon.sock")
 # ---------------------------------------------------------------------------
 
 def write_log(entry):
-    """Append structured JSON log entry to recall.jsonl."""
+    """Append structured JSON log entry to recall.jsonl. Auto-adds timestamp."""
+    if "ts" not in entry:
+        entry["ts"] = time.strftime("%Y-%m-%dT%H:%M:%S")
     log_path = os.path.join(DATA_DIR, "recall.jsonl")
     os.makedirs(DATA_DIR, exist_ok=True)
     with open(log_path, "a") as f:
         f.write(json.dumps(entry, indent=2, ensure_ascii=False) + "\n\n")
+
+
+def hook_main(fn):
+    """Unified hook entry point: crash logging."""
+    try:
+        fn()
+    except Exception:
+        import traceback
+        write_log({"event": "crash", "hook": fn.__name__,
+                    "error": traceback.format_exc()})
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -74,7 +87,7 @@ def load_plugin_config():
         "auto_save_targets": os.environ.get("CLAUDE_PLUGIN_OPTION_AUTO_SAVE_TARGETS", "native"),
         "auto_save_context_turns": int(os.environ.get("CLAUDE_PLUGIN_OPTION_AUTO_SAVE_CONTEXT_TURNS", "3")),
         # Effort: "low" is cheaper/faster but incompatible with complex structured output
-        "recall_effort": os.environ.get("CLAUDE_PLUGIN_OPTION_RECALL_EFFORT", "low"),
+        "recall_effort": os.environ.get("CLAUDE_PLUGIN_OPTION_RECALL_EFFORT", ""),
         "auto_save_effort": os.environ.get("CLAUDE_PLUGIN_OPTION_AUTO_SAVE_EFFORT", ""),  # empty = default (no effort param)
     }
 
@@ -202,7 +215,7 @@ def extract_context(transcript_path, context_messages, context_max_chars):
 # Agent SDK wrapper
 # ---------------------------------------------------------------------------
 
-async def call_sdk_haiku(prompt, system_prompt, output_schema, model="haiku", max_budget_usd=0.02, effort=""):
+async def call_sdk_haiku(prompt, system_prompt, output_schema, model="haiku", max_budget_usd=None, effort=""):
     """Call Haiku via Agent SDK with structured output.
 
     Returns (parsed_json_or_None, usage_dict).
@@ -210,7 +223,13 @@ async def call_sdk_haiku(prompt, system_prompt, output_schema, model="haiku", ma
     """
     from claude_agent_sdk import query as sdk_query
     from claude_agent_sdk import ClaudeAgentOptions
-    from claude_agent_sdk.types import ResultMessage
+    from claude_agent_sdk.types import ResultMessage, AssistantMessage
+
+    stderr_lines = []
+    def on_stderr(line):
+        stderr_lines.append(line.rstrip()[:200])
+        if len(stderr_lines) > 50:
+            stderr_lines.pop(0)
 
     kwargs = dict(
         system_prompt=system_prompt,
@@ -219,9 +238,11 @@ async def call_sdk_haiku(prompt, system_prompt, output_schema, model="haiku", ma
         output_format=output_schema,
         settings='{"disableAllHooks": true}',
         env={"CLAUDECODE": "", "CLAUDE_AGENT_SDK_SKIP_VERSION_CHECK": "1"},
-        max_budget_usd=max_budget_usd,
-        extra_args={"no-session-persistence": None},
+        extra_args={"no-session-persistence": None, "debug-to-stderr": None},
+        stderr=on_stderr,
     )
+    if max_budget_usd is not None:
+        kwargs["max_budget_usd"] = max_budget_usd
     if effort:
         kwargs["effort"] = effort
 
@@ -229,16 +250,36 @@ async def call_sdk_haiku(prompt, system_prompt, output_schema, model="haiku", ma
 
     parsed = None
     usage = {}
+    raw_texts = []
 
-    async for msg in sdk_query(prompt=prompt, options=options):
-        if isinstance(msg, ResultMessage):
-            usage = {
-                "input_tokens": msg.usage.get("input_tokens", 0) if msg.usage else 0,
-                "output_tokens": msg.usage.get("output_tokens", 0) if msg.usage else 0,
-                "cost_usd": msg.total_cost_usd or 0,
-                "duration_api_ms": msg.duration_api_ms,
-            }
-            parsed = msg.structured_output
+    try:
+        async for msg in sdk_query(prompt=prompt, options=options):
+            if isinstance(msg, AssistantMessage):
+                for block in msg.content:
+                    if hasattr(block, "text"):
+                        raw_texts.append(block.text[:500])
+            elif isinstance(msg, ResultMessage):
+                usage = {
+                    "input_tokens": msg.usage.get("input_tokens", 0) if msg.usage else 0,
+                    "output_tokens": msg.usage.get("output_tokens", 0) if msg.usage else 0,
+                    "cost_usd": msg.total_cost_usd or 0,
+                    "duration_api_ms": msg.duration_api_ms,
+                }
+                parsed = msg.structured_output
+                if msg.result:
+                    raw_texts.append(f"[result]: {msg.result[:500]}")
+    except Exception as e:
+        write_log({"event": "sdk_error",
+                    "error": str(e)[:300],
+                    "stderr_tail": stderr_lines[-10:] if stderr_lines else [],
+                    "raw_texts": raw_texts[:5] if raw_texts else []})
+        raise
+
+    # Save raw reasoning to debug log when structured_output is None
+    if parsed is None and raw_texts:
+        write_log({"event": "sdk_no_structured_output",
+                    "raw_texts": raw_texts[:5],
+                    "usage": usage})
 
     return parsed, usage
 

@@ -19,6 +19,7 @@ from utils import (
     call_sdk_haiku,
     compute_memory_dirs,
     extract_messages,
+    hook_main,
     load_plugin_config,
     parse_frontmatter,
     read_memory_files,
@@ -30,6 +31,8 @@ from utils import (
 # ---------------------------------------------------------------------------
 
 SYSTEM_PROMPT = """\
+You are a silent sidecar agent running inside a Claude Code hook. You are NOT in a conversation with the user -- the user cannot see or respond to your output. Your ONLY job is to analyze conversation turns and return CRUD decisions via the structured output tool. Never ask questions, never explain, never converse. Just analyze and return.
+
 You are a memory curator for a coding AI assistant. Analyze conversation exchanges and decide what knowledge should be persisted as long-term memory.
 
 ## Core Principle
@@ -269,14 +272,14 @@ def main():
     t_haiku = time.time()
     parsed, usage = asyncio.run(
         call_sdk_haiku(prompt, SYSTEM_PROMPT, AUTO_SAVE_SCHEMA, config["model"],
-                       max_budget_usd=0.03, effort=config["auto_save_effort"])
+                       effort=config["auto_save_effort"])
     )
     haiku_s = round(time.time() - t_haiku, 2)
 
     if not parsed:
-        write_log({"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "event": "auto_save",
-                    "status": "no_response", "haiku_s": haiku_s,
-                    "elapsed_s": round(time.time() - t_start, 2), "usage": usage})
+        write_log({"event": "auto_save", "status": "no_response",
+                    "haiku_s": haiku_s, "elapsed_s": round(time.time() - t_start, 2),
+                    "usage": usage})
         return
 
     actions = parsed.get("actions", [])
@@ -289,7 +292,6 @@ def main():
 
     # 5. Log
     write_log({
-        "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "event": "auto_save",
         "status": "executed" if executed else "noop",
         "existing_memories": len(memory_entries),
@@ -300,12 +302,11 @@ def main():
         "elapsed_s": round(time.time() - t_start, 2),
     })
 
+    # User-visible summary (only when actions were executed)
+    if executed:
+        parts = [f"{a['action']} {a['file']}" for a in executed]
+        print(json.dumps({"systemMessage": f"Auto-saved: {', '.join(parts)}"}))
+
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception:
-        import traceback
-        write_log({"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "event": "auto_save_crash",
-                    "error": traceback.format_exc()})
-        raise
+    hook_main(main)

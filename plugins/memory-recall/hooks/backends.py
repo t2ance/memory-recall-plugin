@@ -10,6 +10,8 @@ import os
 import socket
 import subprocess
 
+from utils import call_sdk_haiku
+
 HOME = os.path.expanduser("~")
 
 
@@ -32,11 +34,19 @@ def recall_reminder(dim, resources):
 # -- Agentic ------------------------------------------------------------------
 
 
+_SIDECAR_PREAMBLE = """\
+You are a silent sidecar agent running inside a Claude Code hook. You are NOT in a conversation with the user -- the user cannot see or respond to your output. Your ONLY job is to select relevant resources from a catalog and return them via the structured output tool. Never ask questions, never explain, never converse. Just select and return.
+
+Matching rules:
+- Match broadly: if a resource MIGHT be useful, include it. Err on the side of inclusion.
+- The query may be in any language. Match by semantic meaning, not surface keywords.
+- Short or vague queries (like "test") should still match resources related to testing/debugging."""
+
 AGENTIC_SYSTEM_PROMPTS = {
-    "memory": "Select 0-3 memory files most relevant to the query.",
-    "skills": "Select 0-3 skills most relevant to the user's task.",
-    "tools": "Select 0-5 tools/MCP servers most relevant to the user's task.",
-    "agents": "Select 0-2 agent types best suited for the user's task.",
+    "memory": f"{_SIDECAR_PREAMBLE}\n\nSelect 0-3 memory files most relevant to the query.",
+    "skills": f"{_SIDECAR_PREAMBLE}\n\nSelect 0-3 skills most relevant to the user's task.",
+    "tools": f"{_SIDECAR_PREAMBLE}\n\nSelect 0-5 tools/MCP servers most relevant to the user's task.",
+    "agents": f"{_SIDECAR_PREAMBLE}\n\nSelect 0-2 agent types best suited for the user's task.",
 }
 
 _ITEMS_SCHEMA = {
@@ -80,11 +90,7 @@ async def recall_agentic(dim, resources, query, context, model, input_granularit
     input_granularity: 'title_desc' (name+description) or 'full' (entire content for memory files).
     """
     if not resources:
-        return None
-
-    from claude_agent_sdk import query as sdk_query
-    from claude_agent_sdk import ClaudeAgentOptions
-    from claude_agent_sdk.types import ResultMessage
+        return None, {}
 
     if input_granularity == "full":
         lines = []
@@ -108,31 +114,10 @@ async def recall_agentic(dim, resources, query, context, model, input_granularit
     prompt_parts.append(f"\nQuery: {query}")
     agentic_prompt = "\n".join(prompt_parts)
 
-    kwargs = dict(
-        system_prompt=AGENTIC_SYSTEM_PROMPTS[dim],
-        model=model,
-        tools=[],
-        output_format=AGENTIC_SCHEMAS[dim],
-        settings='{"disableAllHooks": true}',
-        env={"CLAUDECODE": "", "CLAUDE_AGENT_SDK_SKIP_VERSION_CHECK": "1"},
-        max_budget_usd=0.01,
-        extra_args={"no-session-persistence": None},
+    parsed, usage = await call_sdk_haiku(
+        agentic_prompt, AGENTIC_SYSTEM_PROMPTS[dim], AGENTIC_SCHEMAS[dim],
+        model=model, max_budget_usd=None, effort=effort,
     )
-    if effort:
-        kwargs["effort"] = effort
-    options = ClaudeAgentOptions(**kwargs)
-
-    parsed = None
-    usage = {}
-    async for msg in sdk_query(prompt=agentic_prompt, options=options):
-        if isinstance(msg, ResultMessage):
-            usage = {
-                "input_tokens": msg.usage.get("input_tokens", 0) if msg.usage else 0,
-                "output_tokens": msg.usage.get("output_tokens", 0) if msg.usage else 0,
-                "cost_usd": msg.total_cost_usd or 0,
-                "duration_api_ms": msg.duration_api_ms,
-            }
-            parsed = msg.structured_output
 
     if not parsed:
         return None, usage
@@ -164,10 +149,6 @@ async def recall_agentic_merged(dim_resources, query, context, model, effort="lo
 
     dim_resources: [(dim, resources), ...] for each enabled agentic dimension.
     """
-    from claude_agent_sdk import query as sdk_query
-    from claude_agent_sdk import ClaudeAgentOptions
-    from claude_agent_sdk.types import ResultMessage
-
     # Build one prompt with all catalogs
     sections = []
     for dim, resources in dim_resources:
@@ -196,31 +177,10 @@ async def recall_agentic_merged(dim_resources, query, context, model, effort="lo
         },
     }
 
-    kwargs = dict(
-        system_prompt=MERGED_SYSTEM_PROMPT,
-        model=model,
-        tools=[],
-        output_format=merged_output_format,
-        settings='{"disableAllHooks": true}',
-        env={"CLAUDECODE": "", "CLAUDE_AGENT_SDK_SKIP_VERSION_CHECK": "1"},
-        max_budget_usd=0.02,
-        extra_args={"no-session-persistence": None},
+    parsed, usage = await call_sdk_haiku(
+        agentic_prompt, MERGED_SYSTEM_PROMPT, merged_output_format,
+        model=model, max_budget_usd=None, effort=effort,
     )
-    if effort:
-        kwargs["effort"] = effort
-    options = ClaudeAgentOptions(**kwargs)
-
-    parsed = None
-    usage = {}
-    async for msg in sdk_query(prompt=agentic_prompt, options=options):
-        if isinstance(msg, ResultMessage):
-            usage = {
-                "input_tokens": msg.usage.get("input_tokens", 0) if msg.usage else 0,
-                "output_tokens": msg.usage.get("output_tokens", 0) if msg.usage else 0,
-                "cost_usd": msg.total_cost_usd or 0,
-                "duration_api_ms": msg.duration_api_ms,
-            }
-            parsed = msg.structured_output
 
     if not parsed:
         return {}
@@ -323,42 +283,3 @@ def ensure_daemon_running(socket_path, plugin_root, data_dir, embedding_python, 
         start_new_session=True,
     )
     log_handle.close()
-
-
-# -- Context extraction -------------------------------------------------------
-
-
-def extract_context(transcript_path, context_messages, context_max_chars):
-    """Extract recent conversation context from transcript."""
-    if not transcript_path or not os.path.exists(transcript_path):
-        return ""
-    result = subprocess.run(
-        ["tail", "-n", "50", transcript_path],
-        capture_output=True, text=True, timeout=2,
-    )
-    if result.returncode != 0:
-        return ""
-    messages = []
-    for line in result.stdout.strip().split("\n"):
-        if not line:
-            continue
-        msg = json.loads(line)
-        role = msg.get("role")
-        if role not in ("user", "assistant"):
-            continue
-        content = msg.get("content", "")
-        if isinstance(content, list):
-            content = " ".join(
-                b.get("text", "")
-                for b in content
-                if isinstance(b, dict) and b.get("type") == "text"
-            )
-        if not isinstance(content, str):
-            continue
-        messages.append(f"{role}: {content[:500]}")
-
-    recent = messages[-context_messages:]
-    context = "\n".join(recent)
-    if len(context) > context_max_chars:
-        context = context[-context_max_chars:]
-    return context

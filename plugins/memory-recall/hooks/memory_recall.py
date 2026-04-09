@@ -28,6 +28,7 @@ from discover import discover_agents, discover_memory, discover_skills, discover
 from utils import (
     DATA_DIR, PLUGIN_ROOT, SOCKET_PATH,
     extract_agent_prompt, extract_context,
+    hook_main,
     load_plugin_config as load_config,
     write_log,
 )
@@ -50,8 +51,7 @@ async def dispatch_one(dim, backend, resources, query, context, config, memory_d
     Returns (dim, result, elapsed_s, usage_dict).
     usage_dict has token/cost info for agentic, empty dict otherwise.
     """
-    import time as _time
-    t0 = _time.time()
+    t0 = time.time()
     usage = {}
 
     if backend == "reminder":
@@ -82,14 +82,12 @@ async def dispatch_one(dim, backend, resources, query, context, config, memory_d
     else:
         assert False, f"Unknown backend: {backend}"
 
-    elapsed = round(_time.time() - t0, 2)
+    elapsed = round(time.time() - t0, 2)
     return dim, result, elapsed, usage
 
 
 async def run_all(tasks, query, context, config, memory_dirs):
     """Run all dimension recalls. Parallel or merged depending on agentic_mode."""
-    import time as _time
-
     # Split tasks into agentic vs non-agentic
     agentic_tasks = [(dim, resources) for dim, backend, resources in tasks if backend == "agentic"]
     other_tasks = [(dim, backend, resources) for dim, backend, resources in tasks if backend != "agentic"]
@@ -98,11 +96,11 @@ async def run_all(tasks, query, context, config, memory_dirs):
 
     if use_merged and agentic_tasks:
         # Single Haiku call for all agentic dimensions
-        t0 = _time.time()
+        t0 = time.time()
         merged_results = await recall_agentic_merged(
             agentic_tasks, query, context, config["model"], config.get("recall_effort", "low")
         )
-        elapsed = round(_time.time() - t0, 2)
+        elapsed = round(time.time() - t0, 2)
         # Convert to standard (dim, result, elapsed, usage) tuples
         agentic_tuples = []
         for dim, _ in agentic_tasks:
@@ -332,7 +330,6 @@ def main():
 
     # Log
     log_entry = {
-        "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "event": event,
         "agent_type": hook_input.get("agent_type", ""),
         "query": prompt,
@@ -353,23 +350,32 @@ def main():
     }
     write_log(log_entry)
 
-    print(json.dumps({
+    # Build user-visible summary with names
+    summary_parts = []
+    for dim, result in results:
+        if result is None:
+            continue
+        if result["type"] == "memory_files":
+            names = [os.path.splitext(os.path.basename(f))[0] for f in result["files"]]
+            summary_parts.append(f"memory: {', '.join(names)}")
+        elif result["type"] == "recommendations":
+            names = [item["name"] for item in result["items"]]
+            summary_parts.append(f"{dim}: {', '.join(names)}")
+
+    output = {
         "hookSpecificOutput": {
             "hookEventName": event,
             "additionalContext": additional_context,
         }
-    }))
+    }
+    cost_str = f"${total_cost_usd:.3f}" if total_cost_usd else ""
+    label = f"Recalled: {'; '.join(summary_parts)}" if summary_parts else "Recalled: nothing relevant"
+    parts = [label, f"{t_elapsed}s"]
+    if cost_str:
+        parts.append(cost_str)
+    output["systemMessage"] = " | ".join(parts)
+    print(json.dumps(output))
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception:
-        import traceback
-        import time
-        write_log({
-            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
-            "event": "crash",
-            "error": traceback.format_exc(),
-        })
-        raise
+    hook_main(main)
