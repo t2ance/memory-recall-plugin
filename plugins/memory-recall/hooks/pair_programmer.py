@@ -32,10 +32,6 @@ from utils import (
 # ---------------------------------------------------------------------------
 
 STATE_FILE = os.path.join(DATA_DIR, "pp_state.json")
-MAX_TOOL_INPUT_CHARS = 2000
-MAX_TOOL_OUTPUT_CHARS = 1000
-MAX_MEMORY_FILE_CHARS = 2000
-MAX_RECALL_FILES = 5
 
 SYSTEM_PROMPT = """\
 You are a silent sidecar running inside a Claude Code hook. You observe the main agent's actions and provide feedback from the user's perspective. You are NOT in a conversation with the user -- the user cannot see or respond to your output. Your ONLY job is to evaluate and return structured feedback via the output tool. Never ask questions, never explain, never converse.
@@ -190,10 +186,12 @@ def build_trajectory(hook_input, config):
     tool_output_str = raw_output if isinstance(raw_output, str) else json.dumps(raw_output, indent=2, ensure_ascii=False)
 
     # Truncate large values
-    if len(tool_input_str) > MAX_TOOL_INPUT_CHARS:
-        tool_input_str = tool_input_str[:MAX_TOOL_INPUT_CHARS] + "\n...(truncated)"
-    if len(tool_output_str) > MAX_TOOL_OUTPUT_CHARS:
-        tool_output_str = tool_output_str[:MAX_TOOL_OUTPUT_CHARS] + "\n...(truncated)"
+    max_input = config.get("pp_max_tool_input_chars", 2000)
+    max_output = config.get("pp_max_tool_output_chars", 1000)
+    if len(tool_input_str) > max_input:
+        tool_input_str = tool_input_str[:max_input] + "\n...(truncated)"
+    if len(tool_output_str) > max_output:
+        tool_output_str = tool_output_str[:max_output] + "\n...(truncated)"
 
     parts.append(
         f"## Current Action\nTool: {tool_name}\nInput:\n{tool_input_str}\nOutput:\n{tool_output_str}"
@@ -223,11 +221,13 @@ async def recall_context(trajectory, cwd, config):
         return "", usage
 
     parts = []
-    for path in result.get("files", [])[:MAX_RECALL_FILES]:
+    max_files = config.get("pp_max_recall_files", 5)
+    max_file_chars = config.get("pp_max_memory_file_chars", 2000)
+    for path in result.get("files", [])[:max_files]:
         if not os.path.exists(path):
             continue
         with open(path) as f:
-            content = f.read()[:MAX_MEMORY_FILE_CHARS]
+            content = f.read()[:max_file_chars]
         basename = os.path.splitext(os.path.basename(path))[0]
         parts.append(f"### {basename}\n{content}")
 

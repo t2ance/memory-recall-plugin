@@ -97,6 +97,10 @@ def load_plugin_config():
         "pp_context_messages": int(os.environ.get("CLAUDE_PLUGIN_OPTION_PP_CONTEXT_MESSAGES", "5")),
         "pp_context_max_chars": int(os.environ.get("CLAUDE_PLUGIN_OPTION_PP_CONTEXT_MAX_CHARS", "3000")),
         "pp_effort": os.environ.get("CLAUDE_PLUGIN_OPTION_PP_EFFORT", ""),
+        "pp_max_tool_input_chars": int(os.environ.get("CLAUDE_PLUGIN_OPTION_PP_MAX_TOOL_INPUT_CHARS", "2000")),
+        "pp_max_tool_output_chars": int(os.environ.get("CLAUDE_PLUGIN_OPTION_PP_MAX_TOOL_OUTPUT_CHARS", "1000")),
+        "pp_max_recall_files": int(os.environ.get("CLAUDE_PLUGIN_OPTION_PP_MAX_RECALL_FILES", "5")),
+        "pp_max_memory_file_chars": int(os.environ.get("CLAUDE_PLUGIN_OPTION_PP_MAX_MEMORY_FILE_CHARS", "2000")),
     }
 
 

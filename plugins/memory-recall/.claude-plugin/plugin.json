@@ -239,6 +239,38 @@
       "title": "Pair Programmer Effort",
       "description": "Effort level for pair programmer calls. '' (default) required for reliable structured output.",
       "default": ""
+    },
+    "pp_max_tool_input_chars": {
+      "type": "number",
+      "title": "PP Max Tool Input Chars",
+      "description": "Maximum characters of tool input to include in trajectory.",
+      "default": 2000,
+      "min": 500,
+      "max": 10000
+    },
+    "pp_max_tool_output_chars": {
+      "type": "number",
+      "title": "PP Max Tool Output Chars",
+      "description": "Maximum characters of tool output to include in trajectory.",
+      "default": 1000,
+      "min": 500,
+      "max": 10000
+    },
+    "pp_max_recall_files": {
+      "type": "number",
+      "title": "PP Max Recall Files",
+      "description": "Maximum number of memory files to recall for evaluation context.",
+      "default": 5,
+      "min": 1,
+      "max": 10
+    },
+    "pp_max_memory_file_chars": {
+      "type": "number",
+      "title": "PP Max Memory File Chars",
+      "description": "Maximum characters to read from each recalled memory file.",
+      "default": 2000,
+      "min": 500,
+      "max": 10000
     }
   }
 }
