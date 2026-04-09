@@ -6,7 +6,7 @@ user_invocable: true
 
 # Memory-Recall Plugin Setup (v3.0)
 
-Guide the user through configuring the memory-recall plugin. 4 hooks, 4 recall dimensions x 3 backends, pair programmer, async support.
+Guide the user through configuring the memory-recall plugin. 4 dimensions x 3 backends.
 
 ## Configuration location
 
@@ -108,54 +108,11 @@ All 8 configs: `memory_input`, `memory_output`, `skills_input`, `skills_output`,
 
 Only ask about options the user wants to customize. Defaults are fine for most users.
 
-## Step 4: Memory Save Configuration
-
-The memory save hook (Stop) auto-saves conversation knowledge after each turn.
-
-| Option | Description | Default |
-|--------|-------------|---------|
-| `auto_save_enabled` | Enable/disable auto-save | `true` |
-| `auto_save_targets` | Where to save: `native` (project memory), `global`, or `both` | `native` |
-| `auto_save_context_turns` | How many recent conversation turns to analyze | `3` |
-| `auto_save_effort` | Effort level for Haiku analysis: `""` (default) or `low` | `""` |
-
-## Step 5: Pair Programmer Configuration
-
-The pair programmer evaluates agent actions (Edit/Write/Bash) against user preferences and past experience. Default off.
-
-| Option | Description | Default |
-|--------|-------------|---------|
-| `pp_enabled` | Master switch | `false` |
-| `pp_model` | Model for evaluation: `haiku` (fast/cheap) or `sonnet` (smarter) | `haiku` |
-| `pp_sample_rate` | Probability of evaluating each tool call (0.0-1.0) | `1.0` |
-| `pp_cooldown_s` | Min seconds between evaluations (prevents rapid-fire) | `0` |
-| `pp_context_messages` | Recent conversation messages for trajectory | `5` |
-| `pp_context_max_chars` | Max chars of conversation context | `3000` |
-| `pp_effort` | Effort level for evaluation calls | `""` |
-| `pp_max_tool_input_chars` | Max chars of tool input in trajectory | `2000` |
-| `pp_max_tool_output_chars` | Max chars of tool output in trajectory | `1000` |
-| `pp_max_recall_files` | Max memory files to recall for context | `5` |
-| `pp_max_memory_file_chars` | Max chars per recalled memory file | `2000` |
-
-Recommend starting with `pp_enabled: true` with defaults.
-
-## Step 6: Async Configuration
-
-Each hook can run synchronously (blocking) or asynchronously (non-blocking).
-
-| Option | Default | Explanation |
-|--------|---------|-------------|
-| `recall_async` | `false` | Recall usually needs sync -- context must be injected before agent responds |
-| `memory_save_async` | `true` | Save runs after turn; safe to background |
-| `pp_async` | `true` | Pair programmer feedback arrives at next tool call instead of blocking current one |
-
-Only change these if you have a specific reason. Defaults are good for most users.
-
-## Step 7: Apply config
+## Step 4: Apply config
 
 Read `~/.claude/settings.json`, merge new options into `pluginConfigs.memory-recall@memory-recall.options`, write back. Preserve all other settings. Create keys if missing.
 
-## Step 8: Environment setup (embedding only)
+## Step 5: Environment setup (embedding only)
 
 If any dimension uses `embedding`:
 
@@ -182,7 +139,7 @@ If any dimension uses `embedding`:
    EMBEDDING_MODEL="MODEL_NAME" EMBEDDING_DEVICE="DEVICE" nohup ~/miniconda3/envs/memory-recall/bin/python "$(find ~/.claude -path '*/memory-recall/hooks/embedding_daemon.py' | head -1)" >> "${PLUGIN_DATA}/daemon.log" 2>&1 &
    ```
 
-## Step 9: Verify
+## Step 6: Verify
 
 **agentic:** `python3 -c "from claude_agent_sdk import query; print('OK')"`
 
@@ -190,7 +147,7 @@ If any dimension uses `embedding`:
 
 **reminder:** No verification needed.
 
-## Step 10: Summary
+## Step 7: Summary
 
 Show configured dimensions and backends. Remind user to restart session or `/reload-plugins` for changes to take effect.
 

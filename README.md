@@ -4,11 +4,12 @@ Multi-dimension context recall for Claude Code. Automatically surfaces relevant 
 
 ## Features
 
+- **4 hooks**: recall (UserPromptSubmit/SubagentStart), memory save (Stop), pair programmer (PostToolUse)
 - **4 recall dimensions**: memory files, skills, tools (MCP + deferred), agent types
 - **3 backends per dimension**: reminder (zero-cost), agentic (Haiku selection), embedding (local RAG)
-- **Parallel execution**: all agentic calls run concurrently via Agent SDK
-- **Structured logging**: JSONL with precise token/cost from Agent SDK ResultMessage
-- **Auto-discovery**: scans plugin cache for skills/agents/MCP servers, falls back to hardcoded for CC built-ins
+- **Pair programmer**: evaluates agent actions against user preferences, past experience, strategic direction
+- **Memory save**: auto-saves conversation knowledge to Memory Bank after each turn
+- **Configurable sync/async**: each hook can run synchronously or asynchronously
 - **4 skills**: `/dream` (consolidation), `/remember` (quick save), `/setup` (config), `/diagnose` (troubleshooting)
 
 ## Installation
@@ -37,25 +38,107 @@ Then configure via `/setup` or manually in `~/.claude/settings.json`:
 
 Each dimension accepts: `"off"`, `"reminder"`, `"agentic"`, or `"embedding"`.
 
-### Additional options
+### Configuration Reference
+
+**Recall options:**
 
 | Option | Description | Default |
 |--------|-------------|---------|
+| `memory` / `skills` / `tools` / `agents` | Backend per dimension: `off`, `reminder`, `agentic`, `embedding` | `reminder` (memory), `off` (others) |
 | `agentic_mode` | `parallel` (one call/dim) or `merged` (single call) | `parallel` |
 | `{dim}_input` | What selector sees: `title_desc` or `full` | `title_desc` |
 | `{dim}_output` | What gets injected: `title_desc` or `full` | `full` (memory), `title_desc` (others) |
-| `max_content_chars` | Global cap on total injected content | `9000` |
 | `model` | Agentic model: `haiku` / `sonnet` / `opus` | `haiku` |
+| `context_messages` | Recent messages for search context | `5` |
+| `context_max_chars` | Max chars of conversation context | `2000` |
+| `max_content_chars` | Global cap on total injected content | `9000` |
+| `recall_effort` | Effort for recall calls: `low` or `""` | `""` |
+
+**Embedding options:**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `embedding_model` | HuggingFace model name | `intfloat/multilingual-e5-small` |
+| `embedding_python` | Python path with sentence-transformers | `~/miniconda3/envs/memory-recall/bin/python` |
+| `embedding_threshold` | Cosine similarity threshold | `0.85` |
+| `embedding_top_k` | Max results per dimension | `3` |
+| `embedding_device` | `cpu` or `cuda` | `cpu` |
+
+**Memory save options:**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `auto_save_enabled` | Enable auto-save after each turn | `true` |
+| `auto_save_targets` | `native` (project), `global`, or `both` | `native` |
+| `auto_save_context_turns` | Conversation turns for analysis | `3` |
+| `auto_save_effort` | Effort level for save calls | `""` |
+
+**Pair programmer options:**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `pp_enabled` | Enable pair programmer | `false` |
+| `pp_model` | Model for evaluation | `haiku` |
+| `pp_sample_rate` | Probability of evaluating each tool call (0-1) | `1.0` |
+| `pp_cooldown_s` | Min seconds between evaluations | `0` |
+| `pp_context_messages` | Recent messages for trajectory | `5` |
+| `pp_context_max_chars` | Max conversation context chars | `3000` |
+| `pp_effort` | Effort level | `""` |
+| `pp_max_tool_input_chars` | Max tool input chars in trajectory | `2000` |
+| `pp_max_tool_output_chars` | Max tool output chars in trajectory | `1000` |
+| `pp_max_recall_files` | Max memory files to recall | `5` |
+| `pp_max_memory_file_chars` | Max chars per recalled memory file | `2000` |
+
+**Async options:**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `recall_async` | Run recall hook asynchronously | `false` |
+| `memory_save_async` | Run memory save hook asynchronously | `true` |
+| `pp_async` | Run pair programmer hook asynchronously | `true` |
 
 ## How It Works
 
-On every `UserPromptSubmit` and `SubagentStart`, the hook:
+### Recall (UserPromptSubmit / SubagentStart)
+
+On every user message and sub-agent spawn, the hook:
 
 1. **Discovers** available resources per enabled dimension (file scan + hardcoded fallback)
 2. **Recalls** relevant items using the configured backend (parallel for agentic)
 3. **Injects** results as `additionalContext` into the model's context
 
 Sub-agents and teammates also receive recall context. On `SubagentStart`, the hook extracts the parent agent's prompt from the transcript and runs the full recall pipeline.
+
+### Memory Save (Stop)
+
+After each assistant turn, the hook:
+
+1. Extracts recent conversation turns from transcript
+2. Calls Haiku to decide what knowledge to persist (ADD/UPDATE/DELETE/NOOP)
+3. Writes memory files and updates MEMORY.md index
+
+Config: `auto_save_enabled` (default true), `auto_save_targets` (native/global/both), `auto_save_context_turns` (default 3), `auto_save_effort`.
+
+### Pair Programmer (PostToolUse)
+
+After action tools (Edit/Write/Bash/NotebookEdit), the hook:
+
+1. Builds trajectory from current tool call + recent conversation
+2. Recalls relevant memories from Memory Bank
+3. Evaluates across 3 dimensions (preference alignment, experience recall, strategic oversight)
+4. Injects soft suggestions via `additionalContext`
+
+Default off. Enable with `pp_enabled: true`. See config table below for all `pp_*` options.
+
+### Async Support
+
+Each hook can run synchronously (blocking) or asynchronously (non-blocking):
+
+| Option | Default | Effect |
+|--------|---------|--------|
+| `recall_async` | `false` | Recall must usually be sync (context needed before agent responds) |
+| `memory_save_async` | `true` | Save runs in background after turn completes |
+| `pp_async` | `true` | Pair programmer feedback arrives at next tool call |
 
 ### Backends
 
@@ -121,12 +204,15 @@ The embedding daemon starts automatically on first use. Configure model and devi
 
 ```
 hooks/
-  memory_recall.py      # Entry point: parallel dispatch + merge + log
+  memory_recall.py      # Recall hook: parallel dispatch + merge + inject
+  auto_save.py          # Memory save hook: Haiku CRUD on conversation knowledge
+  pair_programmer.py    # Pair programmer hook: 3-dimension evaluation of agent actions
   discover.py           # Resource discovery (file scan + hardcoded fallback)
-  backends.py           # 3 generic recall implementations
+  backends.py           # 3 recall backend implementations
+  utils.py              # Shared: Agent SDK wrapper, config, logging, async mode
   constants.py          # Hardcoded built-in skills, deferred tools, agent types
   embedding_daemon.py   # Local RAG daemon (sentence-transformers)
-  hooks.json            # Hook registration (UserPromptSubmit 30s, SubagentStart 60s)
+  hooks.json            # Hook registration (4 hooks)
 skills/
   dream/SKILL.md        # Memory consolidation
   remember/SKILL.md     # Quick save

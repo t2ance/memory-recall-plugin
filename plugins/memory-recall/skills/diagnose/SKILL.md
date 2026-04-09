@@ -24,7 +24,7 @@ The single most useful diagnostic artifact. Every recall invocation logs here:
 ```
 
 Read the last entry first (`tail -30`). Key fields:
-- `event`: UserPromptSubmit or SubagentStart (can also be `auto_save` or `pair_programmer`)
+- `event`: UserPromptSubmit or SubagentStart
 - `dimensions`: which backend each dim used
 - `discovered`: resource counts per dim
 - `results`: what was selected (files, items, or no_results)
@@ -72,7 +72,7 @@ Run these 5 checks first to get a baseline:
 **Checks:**
 - Is hooks.json present in the active cache version dir? List all version dirs and check each.
 - Does hooks.json contain both `UserPromptSubmit` and `SubagentStart` entries?
-- Run `/reload-plugins` -- does it report "4 hooks"?
+- Run `/reload-plugins` -- does it report "2 hooks"?
 - Run `/doctor` -- any errors referencing memory-recall?
 
 **Common causes:**
@@ -269,44 +269,3 @@ Both steps are required in this order. `marketplace update` does `git pull` on t
 Note: `claude plugin update` does NOT work for same-version code changes -- it compares the `version` field in `plugin.json` and skips if unchanged.
 
 After reinstalling, run `/reload-plugins` in the active session.
-
-### 13. Pair programmer not working
-
-**Symptom:** No "PP:" systemMessage after Edit/Write/Bash. No `event: "pair_programmer"` in recall.jsonl.
-
-**Checks:**
-- Is `pp_enabled` set to `true` in pluginConfigs?
-  ```bash
-  python3 -c "import json; c=json.load(open('$HOME/.claude/settings.json')).get('pluginConfigs',{}).get('memory-recall@memory-recall',{}).get('options',{}); print('pp_enabled:', c.get('pp_enabled', 'NOT SET (default: false)'))"
-  ```
-- Does hooks.json have PostToolUse entry?
-  ```bash
-  python3 -c "import json; h=json.load(open(next(__import__('glob').glob('$HOME/.claude/plugins/cache/memory-recall/memory-recall/*/hooks/hooks.json')))); print('PostToolUse' in h.get('hooks',{}))"
-  ```
-- Check recall.jsonl for pair_programmer entries:
-  ```bash
-  grep '"event": "pair_programmer"' ~/.claude/plugins/data/memory-recall-memory-recall/recall.jsonl | tail -3
-  ```
-- If `pp_async=true` (default), feedback appears at the NEXT tool call, not the current one. This is by design.
-
-**Common causes:**
-- `pp_enabled` not set or set to false (default is false).
-- Config not reloaded (`/reload-plugins` needed after settings change).
-- Tool not in matcher list (Read/Glob/Grep don't trigger pair programmer by design).
-
-### 14. Async hook results not appearing
-
-**Symptom:** Hook runs (log entry exists with timing) but no visible additionalContext in agent's response.
-
-**Checks:**
-- Which *_async options are true?
-  ```bash
-  python3 -c "import json; c=json.load(open('$HOME/.claude/settings.json')).get('pluginConfigs',{}).get('memory-recall@memory-recall',{}).get('options',{}); print('recall_async:', c.get('recall_async','false')); print('memory_save_async:', c.get('memory_save_async','true')); print('pp_async:', c.get('pp_async','true'))"
-  ```
-- Async results arrive at the NEXT API call, not the current one. If the agent only made one tool call in the turn, there may be no "next" call for the result to attach to.
-- Check if the hook completed before the next tool call started (compare timestamps in recall.jsonl).
-
-**Key understanding:**
-- `recall_async=true` is usually wrong -- recall context arrives too late (after agent already responded).
-- `memory_save_async=true` is fine -- save doesn't inject context.
-- `pp_async=true` means pair programmer feedback arrives at the next tool call. If agent does Edit then Read, the PP feedback about the Edit appears when the Read result comes back.
