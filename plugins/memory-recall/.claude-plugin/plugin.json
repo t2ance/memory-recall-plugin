@@ -189,6 +189,56 @@
       "default": 3,
       "min": 1,
       "max": 10
+    },
+    "pp_enabled": {
+      "type": "boolean",
+      "title": "Pair Programmer Enabled",
+      "description": "Enable PostToolUse sidecar pair programmer that evaluates agent actions against user preferences and past experience.",
+      "default": false
+    },
+    "pp_model": {
+      "type": "string",
+      "title": "Pair Programmer Model",
+      "description": "Model for pair programmer evaluation (haiku/sonnet)",
+      "default": "haiku"
+    },
+    "pp_sample_rate": {
+      "type": "number",
+      "title": "Pair Programmer Sample Rate",
+      "description": "Probability of evaluating each action tool call (0.0-1.0). Lower = cheaper.",
+      "default": 1.0,
+      "min": 0,
+      "max": 1
+    },
+    "pp_cooldown_s": {
+      "type": "number",
+      "title": "Pair Programmer Cooldown (seconds)",
+      "description": "Minimum seconds between evaluations. Prevents rapid-fire during batch edits.",
+      "default": 0,
+      "min": 0,
+      "max": 60
+    },
+    "pp_context_messages": {
+      "type": "number",
+      "title": "Pair Programmer Context Messages",
+      "description": "Number of recent conversation messages to include in trajectory.",
+      "default": 5,
+      "min": 1,
+      "max": 15
+    },
+    "pp_context_max_chars": {
+      "type": "number",
+      "title": "Pair Programmer Context Max Chars",
+      "description": "Maximum characters of conversation context for pair programmer.",
+      "default": 3000,
+      "min": 500,
+      "max": 10000
+    },
+    "pp_effort": {
+      "type": "string",
+      "title": "Pair Programmer Effort",
+      "description": "Effort level for pair programmer calls. '' (default) required for reliable structured output.",
+      "default": ""
     }
   }
 }
