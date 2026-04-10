@@ -299,8 +299,8 @@
     "curator_cooldown_h": {
       "type": "number",
       "title": "Curator Cooldown (hours)",
-      "description": "Minimum hours between curator runs. Default 4.",
-      "default": 4,
+      "description": "Minimum hours between curator runs. Default 1.",
+      "default": 1,
       "min": 0,
       "max": 48
     },

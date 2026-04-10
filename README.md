@@ -97,7 +97,7 @@ Each dimension accepts: `"off"`, `"reminder"`, `"agentic"`, or `"embedding"`.
 | `memory_save_async` | Run memory save hook asynchronously | `true` |
 | `pair_programmer_async` | Run pair programmer hook asynchronously | `true` |
 | `curator_enabled` | Enable periodic memory consolidation | `true` |
-| `curator_cooldown_h` | Min hours between curator runs | `4` |
+| `curator_cooldown_h` | Min hours between curator runs | `1` |
 | `curator_effort` | Effort level for curator calls | `""` |
 | `curator_async` | Run curator hook asynchronously | `true` |
 
