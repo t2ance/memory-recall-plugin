@@ -17,7 +17,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from utils import (
-    DATA_DIR,
+    DATA_DIR, STATUS_DIR,
     call_sdk_haiku,
     compute_memory_dirs,
     hook_main, maybe_go_async,
@@ -33,6 +33,9 @@ from utils import (
 
 STATE_FILE = os.path.join(DATA_DIR, "curator_state.json")
 DEFAULT_COOLDOWN_H = 4
+DRY_RUN = os.environ.get("CURATOR_DRY_RUN", "false") == "true"
+MAX_WAIT_FOR_SAVE_S = 30
+WAIT_POLL_INTERVAL_S = 2
 
 # ---------------------------------------------------------------------------
 # Prompt & schema
@@ -128,6 +131,20 @@ CURATOR_SCHEMA = {
 # ---------------------------------------------------------------------------
 
 
+def wait_for_memory_save(session_id):
+    """Wait for memory_save to finish before curating, to avoid data races."""
+    status_path = os.path.join(STATUS_DIR, session_id, "memory_save.json")
+    waited = 0
+    while waited < MAX_WAIT_FOR_SAVE_S:
+        if os.path.isfile(status_path):
+            with open(status_path) as f:
+                status = json.load(f)
+            if status.get("state") == "done":
+                return
+        time.sleep(WAIT_POLL_INTERVAL_S)
+        waited += WAIT_POLL_INTERVAL_S
+
+
 def check_cooldown(cooldown_h):
     if cooldown_h <= 0:
         return True
@@ -150,9 +167,17 @@ def update_cooldown():
 # ---------------------------------------------------------------------------
 
 
+MAX_PROMPT_CHARS = 400_000  # ~100K tokens, safe for Haiku's 200K context
+
+
 def build_prompt(memory_entries, memory_dir):
-    """Build prompt with full content of all memory files."""
-    parts = [f"## Memory Bank ({len(memory_entries)} files in {memory_dir})\n"]
+    """Build prompt with full content of all memory files.
+
+    Falls back to title+desc only if total content exceeds MAX_PROMPT_CHARS.
+    """
+    # First pass: collect all content
+    file_contents = {}
+    total_chars = 0
     for entry in memory_entries:
         path = entry["id"]
         if os.path.isfile(path):
@@ -160,7 +185,20 @@ def build_prompt(memory_entries, memory_dir):
                 content = f.read()
         else:
             content = "(file not found)"
-        parts.append(f"### [{entry['file']}] {entry['name']}\n{content}\n")
+        file_contents[entry["file"]] = content
+        total_chars += len(content)
+
+    # If too large, use title+desc mode
+    if total_chars > MAX_PROMPT_CHARS:
+        parts = [f"## Memory Bank ({len(memory_entries)} files, title+desc mode -- too large for full content)\n"]
+        for entry in memory_entries:
+            parts.append(f"- [{entry['file']}] {entry['name']}: {entry['description']} (type: {entry['type']})")
+        parts.append("\n## Task\nAnalyze ALL files above. Return actions for every file. Use title+description to decide DELETE vs KEEP. For MERGE, group by topic name similarity.")
+        return "\n".join(parts)
+
+    parts = [f"## Memory Bank ({len(memory_entries)} files in {memory_dir})\n"]
+    for entry in memory_entries:
+        parts.append(f"### [{entry['file']}] {entry['name']}\n{file_contents[entry['file']]}\n")
     parts.append("## Task\nAnalyze ALL files above. Return actions for every file.")
     return "\n".join(parts)
 
@@ -171,19 +209,18 @@ def build_prompt(memory_entries, memory_dir):
 
 
 def execute_actions(actions, memory_dir):
-    """Execute MERGE and DELETE actions. Returns list of executed actions."""
+    """Execute MERGE and DELETE actions, then rebuild index from disk."""
     executed = []
 
     for a in actions:
         act = a.get("action", "KEEP").upper()
 
         if act == "DELETE":
-            target = a.get("target_file", "")
+            target = a.get("target_file") or a.get("name", "")
             path = os.path.join(memory_dir, target)
             if not target or not os.path.isfile(path):
                 continue
             os.remove(path)
-            _remove_from_index(memory_dir, target)
             executed.append({"action": "DELETE", "file": target,
                              "reason": a.get("reason", "")})
 
@@ -196,22 +233,22 @@ def execute_actions(actions, memory_dir):
             if not content or not source_files:
                 continue
 
-            # Delete source files
             for sf in source_files:
                 spath = os.path.join(memory_dir, sf)
                 if os.path.isfile(spath):
                     os.remove(spath)
-                    _remove_from_index(memory_dir, sf)
 
-            # Write merged file
             fname = _to_filename(name)
             path = os.path.join(memory_dir, fname)
             with open(path, "w") as f:
                 f.write(f"---\nname: {name}\ndescription: {desc}\ntype: {mtype}\n---\n\n{content}\n")
-            _add_to_index(memory_dir, fname, name, desc)
             executed.append({"action": "MERGE", "sources": source_files,
                              "merged_into": fname,
                              "reason": a.get("reason", "")})
+
+    # Rebuild MEMORY.md from actual files on disk
+    if executed:
+        _rebuild_index(memory_dir)
 
     return executed
 
@@ -224,20 +261,14 @@ def _to_filename(name):
     return s[:60].rstrip("_") + ".md"
 
 
-def _remove_from_index(memory_dir, fname):
+def _rebuild_index(memory_dir):
+    """Rebuild MEMORY.md from all .md files on disk (except MEMORY.md itself)."""
+    entries = read_memory_files(memory_dir)
     index_path = os.path.join(memory_dir, "MEMORY.md")
-    if not os.path.isfile(index_path):
-        return
-    with open(index_path) as f:
-        lines = f.readlines()
     with open(index_path, "w") as f:
-        f.writelines(l for l in lines if f"({fname})" not in l)
-
-
-def _add_to_index(memory_dir, fname, name, desc):
-    index_path = os.path.join(memory_dir, "MEMORY.md")
-    with open(index_path, "a") as f:
-        f.write(f"- [{name}]({fname}) -- {desc[:100]}\n")
+        for e in sorted(entries, key=lambda x: x["file"]):
+            desc = e["description"][:100]
+            f.write(f"- [{e['name']}]({e['file']}) -- {desc}\n")
 
 
 # ---------------------------------------------------------------------------
@@ -270,6 +301,11 @@ def main():
         return
 
     write_status("curator", "running", hook_input, timeout_s=120)
+
+    # Wait for memory_save to finish first (both run on Stop hook)
+    session_id = hook_input.get("session_id", "")
+    if session_id:
+        wait_for_memory_save(session_id)
 
     # Read all memory files
     proj_dir, glob_dir = compute_memory_dirs(cwd)
@@ -308,13 +344,31 @@ def main():
     deletes = [a for a in actions if a.get("action", "").upper() == "DELETE"]
     keeps = [a for a in actions if a.get("action", "").upper() == "KEEP"]
 
-    # Execute
-    executed = execute_actions(actions, proj_dir)
+    # Execute (or dry-run)
+    if DRY_RUN:
+        executed = []
+        elapsed = round(time.time() - t_start, 2)
+        write_log({
+            "event": "curator",
+            "status": "dry_run",
+            "files_before": len(memory_entries),
+            "proposed_merges": len(merges),
+            "proposed_deletes": len(deletes),
+            "proposed_keeps": len(keeps),
+            "proposed_actions": actions,
+            "usage": usage,
+            "haiku_s": haiku_s,
+            "elapsed_s": elapsed,
+        })
+        summary = f"DRY RUN: {len(deletes)} delete, {len(merges)} merge, {len(keeps)} keep"
+        write_status("curator", "done", hook_input, summary=summary,
+                     elapsed_s=elapsed, cost_usd=usage.get("cost_usd", 0) if usage else 0,
+                     model=config.get("model", "haiku"))
+        return
 
-    # Update cooldown
+    executed = execute_actions(actions, proj_dir)
     update_cooldown()
 
-    # Log
     elapsed = round(time.time() - t_start, 2)
     write_log({
         "event": "curator",
@@ -329,7 +383,6 @@ def main():
         "elapsed_s": elapsed,
     })
 
-    # Status
     merge_count = sum(1 for e in executed if e["action"] == "MERGE")
     delete_count = sum(1 for e in executed if e["action"] == "DELETE")
     summary = f"{len(memory_entries)} files: {delete_count} deleted, {merge_count} merged"
