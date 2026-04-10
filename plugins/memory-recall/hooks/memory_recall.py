@@ -375,7 +375,7 @@ def main():
     label = f"Recalled: {'; '.join(summary_parts)}" if summary_parts else "Recalled: nothing relevant"
     recall_model = config.get("model", "haiku")
     write_status("recall", "done", hook_input,
-                 summary=label, elapsed_s=t_elapsed,
+                 summary=label[:120], elapsed_s=t_elapsed,
                  cost_usd=total_cost_usd, model=recall_model)
     print(json.dumps(output))
 
