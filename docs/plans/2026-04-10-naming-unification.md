@@ -474,3 +474,93 @@ Send a message and check statusLine shows `recall`, `memory_save`, `pair_program
 - [ ] **Step 5: Commit settings.json change (if desired)**
 
 The settings.json change is user-local, no git commit needed.
+
+---
+
+### Task 8: Unify skip/cooldown logic across all hooks
+
+**Context:**
+
+Currently only pair_programmer has a real cooldown mechanism (`pp_cooldown_s`). auto_save and recall use `skipped=True` for "event doesn't match" which is not a real skip — it's just the hook being called for an irrelevant event. These should not be counted as skips.
+
+**Design:**
+
+Give all three hooks a unified cooldown model:
+
+| Hook | Config key | Default | Rationale |
+|------|-----------|---------|-----------|
+| `pair_programmer` | `pair_programmer_cooldown_s` | 60 | Already exists, keep |
+| `memory_save` | `memory_save_cooldown_s` | 60 | Saves don't need to run every turn |
+| `recall` | `recall_cooldown_s` | 0 | Every user message should get recall |
+
+**Behavior:**
+- Cooldown = "I matched the right event but I ran recently, so I skip"
+- Event mismatch = "This hook doesn't apply to this event" — **not a skip, just return silently without touching status file**
+
+**Files:**
+- Modify: `hooks/memory_save.py` — add cooldown logic (reuse pair_programmer's pattern)
+- Modify: `hooks/recall.py` — add cooldown logic with default 0 (effectively disabled)
+- Modify: `hooks/utils.py` — add `memory_save_cooldown_s` and `recall_cooldown_s` to config
+- Modify: `.claude-plugin/plugin.json` — add new userConfig keys
+- Modify: all three hooks — remove `skipped=True` from event-mismatch returns (just return without writing status)
+
+- [ ] **Step 1: Remove skipped=True from event-mismatch early returns**
+
+In all three hooks, event-mismatch returns should NOT call `write_status` at all:
+
+```python
+# memory_save.py
+if event != "Stop":
+    return  # not our event, don't touch status
+if hook_input.get("stop_hook_active", False):
+    return
+if not config["memory_save_enabled"]:
+    return
+
+# recall.py
+if not cwd:
+    sys.exit(0)  # no status write
+
+# pair_programmer.py
+if hook_input.get("hook_event_name") != "PostToolUse":
+    return  # not our event, don't touch status
+```
+
+- [ ] **Step 2: Add cooldown to memory_save.py**
+
+Reuse pair_programmer's cooldown pattern:
+- Read state file for last execution timestamp
+- If `now - last_run < cooldown_s`, call `write_status(..., skipped=True)` and return
+- Otherwise proceed with execution
+
+- [ ] **Step 3: Add cooldown_s config keys**
+
+In `utils.py` `load_plugin_config()`:
+```python
+"memory_save_cooldown_s": float(os.environ.get("CLAUDE_PLUGIN_OPTION_MEMORY_SAVE_COOLDOWN_S", "60")),
+"recall_cooldown_s": float(os.environ.get("CLAUDE_PLUGIN_OPTION_RECALL_COOLDOWN_S", "0")),
+```
+
+In `plugin.json` userConfig:
+```json
+"memory_save_cooldown_s": {
+    "type": "number",
+    "default": 60,
+    "description": "Minimum seconds between memory save executions"
+},
+"recall_cooldown_s": {
+    "type": "number",
+    "default": 0,
+    "description": "Minimum seconds between recall executions (0 = every message)"
+}
+```
+
+- [ ] **Step 4: Verify and commit**
+
+```bash
+python3 -c "import ast; ast.parse(open('hooks/memory_save.py').read()); print('OK')"
+python3 -c "import ast; ast.parse(open('hooks/recall.py').read()); print('OK')"
+python3 -c "import ast; ast.parse(open('hooks/pair_programmer.py').read()); print('OK')"
+git add -A
+git commit -m "feat: unify cooldown logic across all hooks"
+```
