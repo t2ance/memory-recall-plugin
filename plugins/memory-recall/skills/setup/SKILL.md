@@ -154,3 +154,43 @@ Show configured dimensions and backends. Remind user to restart session or `/rel
 ## Troubleshooting
 
 If something isn't working after setup, tell the user to run `/diagnose` for interactive troubleshooting.
+
+## StatusLine Integration (Hook Visibility)
+
+The plugin writes hook execution status to JSON files. To see this status in your Claude Code statusLine, integrate the reading logic into your statusLine script.
+
+### What it does
+
+Each hook (recall, auto_save, pair_programmer) writes its execution state (running/done/error) to:
+```
+~/.claude/plugins/data/memory-recall-memory-recall/status/<session_id>/<hook>.json
+```
+
+Your statusLine script reads these files and appends one line per hook showing its current state, timing, cost, and summary.
+
+### How to integrate
+
+Read the user's existing statusLine configuration from `~/.claude/settings.json` (the `statusLine.command` field). Then read the script it points to and append the plugin status reading logic.
+
+**Key requirements for the reading logic:**
+1. Extract `session_id` from stdin JSON (`.session_id`)
+2. Read all `*.json` files from `~/.claude/plugins/data/memory-recall-memory-recall/status/<session_id>/`
+3. For each file, parse the JSON and format one line:
+   - Main agent (no `agent_id`): always display
+   - Subagent (has `agent_id`): only display if `state == "running"`
+4. Color coding: green for done, yellow for running, red for error/timeout
+5. Stale detection: if state is "running" and `started_at` is older than 120 seconds, show as "timeout"
+6. The script MUST exit with code 0 (add `exit 0` at end). CC discards output on non-zero exit.
+7. Plugin status lines appear after the user's existing statusLine output.
+
+### If user has no statusLine configured
+
+Create a new script at `~/.claude/statusline-memory-recall.sh` that reads the status files and outputs them. Then set `statusLine.command` in `~/.claude/settings.json` to `bash ~/.claude/statusline-memory-recall.sh`.
+
+### Display format example
+
+```
+recall: 3 items recalled | 0.42s $0.003 haiku 14:32:05 x42
+auto_save: running... (started 14:33:01)
+pp[Explore]: running... (started 14:34:01)
+```
