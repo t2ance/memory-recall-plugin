@@ -4,9 +4,9 @@ description: "Interactive setup for memory-recall plugin. Configure recall dimen
 user_invocable: true
 ---
 
-# Memory-Recall Plugin Setup (v3.2.0)
+# Memory-Recall Plugin Setup (v4.0.0)
 
-Guide the user through configuring the memory-recall plugin. 4 dimensions x 3 backends.
+Guide the user through configuring the memory-recall plugin. 4 subsystems, each with enabled/model/effort/async.
 
 ## Configuration location
 
@@ -17,10 +17,10 @@ Plugin options in `~/.claude/settings.json` under:
   "pluginConfigs": {
     "memory-recall@memory-recall": {
       "options": {
-        "memory": "reminder",
-        "skills": "off",
-        "tools": "off",
-        "agents": "off",
+        "recall_memory_backend": "reminder",
+        "recall_skills_backend": "off",
+        "recall_tools_backend": "off",
+        "recall_agents_backend": "off",
         ...
       }
     }
@@ -54,19 +54,19 @@ Use AskUserQuestion to ask about each recall dimension. Each dimension can be in
 | `tools` | MCP servers + CC deferred tools (WebFetch, WebSearch, etc.) | Reads settings.json mcpServers + hardcoded deferred tools |
 | `agents` | Agent types (general-purpose, Explore, debugger, etc.) | Scans .claude/agents/ + plugin agents + hardcoded built-in |
 
-Recommend starting with `memory: agentic` and one or two other dimensions on `agentic`. All agentic dimensions run in parallel (~5s total latency regardless of count).
+Recommend starting with `recall_memory_backend: agentic` and one or two other dimensions on `agentic`. All agentic dimensions run in parallel (~5s total latency regardless of count).
 
 ## Step 3: Backend-specific options
 
 **If any dimension uses `agentic`:**
-- `model`: Which model? Options: `haiku` (fast/cheap, recommended), `sonnet` (smarter but costlier), `opus` (most capable, most expensive). Default: `haiku`.
-- `agentic_mode`: `parallel` (one call per dimension, better quality) or `merged` (single call for all, faster). Default: `parallel`.
+- `recall_model`: Which model? Options: `haiku` (fast/cheap, recommended), `sonnet` (smarter but costlier), `opus` (most capable, most expensive). Default: `haiku`.
+- `recall_agentic_mode`: `parallel` (one call per dimension, better quality) or `merged` (single call for all, faster). Default: `parallel`.
 
 **Per-dimension granularity (ask if user wants fine-grained control):**
 
 Each dimension has independent input and output granularity:
-- `{dim}_input`: What the selection backend (Haiku/embedding) sees when choosing resources.
-- `{dim}_output`: What gets injected into the main model's context after selection.
+- `recall_{dim}_input`: What the selection backend (Haiku/embedding) sees when choosing resources.
+- `recall_{dim}_output`: What gets injected into the main model's context after selection.
 
 Both accept `title_desc` or `full`:
 
@@ -76,14 +76,14 @@ Both accept `title_desc` or `full`:
 | `full` | File content (truncated to 500 chars) | Full file content injected into context |
 
 Concrete examples:
-- `memory_output: full` (default) = selected memory files are **read in full** and injected
-- `memory_output: title_desc` = only file paths injected, model must Read files itself
-- `skills_output: full` = selected skills' SKILL.md content injected
-- `skills_output: title_desc` (default) = only skill name + recommendation reason
+- `recall_memory_output: full` (default) = selected memory files are **read in full** and injected
+- `recall_memory_output: title_desc` = only file paths injected, model must Read files itself
+- `recall_skills_output: full` = selected skills' SKILL.md content injected
+- `recall_skills_output: title_desc` (default) = only skill name + recommendation reason
 
-Defaults: all `{dim}_input` default to `title_desc`. `memory_output` defaults to `full`, all others to `title_desc`.
+Defaults: all `recall_{dim}_input` default to `title_desc`. `recall_memory_output` defaults to `full`, all others to `title_desc`.
 
-All 8 configs: `memory_input`, `memory_output`, `skills_input`, `skills_output`, `tools_input`, `tools_output`, `agents_input`, `agents_output`.
+All 8 configs: `recall_memory_input`, `recall_memory_output`, `recall_skills_input`, `recall_skills_output`, `recall_tools_input`, `recall_tools_output`, `recall_agents_input`, `recall_agents_output`.
 
 **N/A combinations** (setting has no effect):
 
@@ -95,16 +95,24 @@ All 8 configs: `memory_input`, `memory_output`, `skills_input`, `skills_output`,
 | `embedding` (non-memory) | Works | Works |
 
 **If any dimension uses `embedding`:**
-- `embedding_model`: HuggingFace model name. Default: `intfloat/multilingual-e5-small`.
-- `embedding_python`: Path to Python with sentence-transformers. Default: `~/miniconda3/envs/memory-recall/bin/python`.
-- `embedding_threshold`: Cosine similarity threshold (0-1). Default: `0.85`.
-- `embedding_top_k`: Max results per dimension (1-10). Default: `3`.
-- `embedding_device`: `cpu` or `cuda`. Default: `cpu`.
+- `recall_embedding_model`: HuggingFace model name. Default: `intfloat/multilingual-e5-small`.
+- `recall_embedding_python`: Path to Python with sentence-transformers. Default: `~/miniconda3/envs/memory-recall/bin/python`.
+- `recall_embedding_threshold`: Cosine similarity threshold (0-1). Default: `0.85`.
+- `recall_embedding_top_k`: Max results per dimension (1-10). Default: `3`.
+- `recall_embedding_device`: `cpu` or `cuda`. Default: `cpu`.
 
-**Shared options (ask for any non-off dimension):**
-- `context_messages`: Recent conversation messages for search context (0-20). Default: `5`.
-- `context_max_chars`: Max chars of context (0-10000). Default: `2000`.
-- `max_content_chars`: Global cap on total injected content across all dimensions (1000-10000). Default: `9000`. This is a shared budget -- dimensions are processed in order (memory, skills, tools, agents), and each dimension's output decrements the remaining budget. If memory uses 7000 chars, only 2000 chars remain for the other dimensions.
+**Shared recall options (ask for any non-off dimension):**
+- `recall_context_messages`: Recent conversation messages for search context (0-20). Default: `5`.
+- `recall_context_max_chars`: Max chars of context (0-10000). Default: `2000`.
+- `recall_max_content_chars`: Global cap on total injected content across all dimensions (1000-10000). Default: `9000`. This is a shared budget -- dimensions are processed in order (memory, skills, tools, agents), and each dimension's output decrements the remaining budget. If memory uses 7000 chars, only 2000 chars remain for the other dimensions.
+
+**Per-subsystem model selection:**
+
+Each subsystem has its own model config. Ask if user wants different models for different subsystems:
+- `recall_model`: Model for recall agentic calls. Default: `haiku`.
+- `memory_save_model`: Model for memory save analysis. Default: `haiku`.
+- `pair_programmer_model`: Model for pair programmer evaluation. Default: `haiku`.
+- `curator_model`: Model for curator consolidation. Default: `haiku`.
 
 Only ask about options the user wants to customize. Defaults are fine for most users.
 
