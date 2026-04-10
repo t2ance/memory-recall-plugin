@@ -1,6 +1,6 @@
 {
   "name": "memory-recall",
-  "version": "3.2.0",
+  "version": "4.0.0",
   "description": "Multi-dimension recall + auto-save. Recall: memory, skills, tools, agent types with reminder/agentic/embedding backends. Auto-save: Stop hook analyzes each turn and persists valuable knowledge via Haiku CRUD.",
   "author": {
     "name": "peijia"
@@ -16,176 +16,200 @@
     "agents"
   ],
   "userConfig": {
-    "memory": {
-      "type": "string",
-      "title": "Memory Recall Backend",
-      "description": "'off', 'reminder' (list paths), 'agentic' (Haiku selects files), or 'embedding' (local RAG)",
-      "default": "agentic"
+    "recall_enabled": {
+      "type": "boolean",
+      "title": "Recall Enabled",
+      "description": "Enable memory recall on UserPromptSubmit and SubagentStart.",
+      "default": true
     },
-    "skills": {
+    "recall_model": {
       "type": "string",
-      "title": "Skills Recall Backend",
-      "description": "'off', 'reminder' (list all), 'agentic' (Haiku selects), or 'embedding' (vector match)",
-      "default": "agentic"
-    },
-    "tools": {
-      "type": "string",
-      "title": "Tools Recall Backend",
-      "description": "'off', 'reminder' (list all), 'agentic' (Haiku selects), or 'embedding' (vector match). Covers MCP servers + deferred tools.",
-      "default": "agentic"
-    },
-    "agents": {
-      "type": "string",
-      "title": "Agent Types Recall Backend",
-      "description": "'off', 'reminder' (list all), 'agentic' (Haiku selects), or 'embedding' (vector match)",
-      "default": "agentic"
-    },
-    "memory_input": {
-      "type": "string",
-      "title": "Memory Input Granularity",
-      "description": "What Haiku sees: 'title_desc' (name+description) or 'full' (entire file content)",
-      "default": "title_desc"
-    },
-    "memory_output": {
-      "type": "string",
-      "title": "Memory Output Granularity",
-      "description": "What gets injected to main model: 'title_desc' or 'full' (entire file content)",
-      "default": "full"
-    },
-    "skills_input": {
-      "type": "string",
-      "title": "Skills Input Granularity",
-      "description": "What Haiku sees: 'title_desc' (name+description) or 'full' (SKILL.md content, truncated)",
-      "default": "title_desc"
-    },
-    "skills_output": {
-      "type": "string",
-      "title": "Skills Output Granularity",
-      "description": "What gets injected: 'title_desc' (name+reason) or 'full' (skill SKILL.md content)",
-      "default": "title_desc"
-    },
-    "tools_input": {
-      "type": "string",
-      "title": "Tools Input Granularity",
-      "description": "What Haiku sees: 'title_desc' (name+description) or 'full' (full tool description)",
-      "default": "title_desc"
-    },
-    "tools_output": {
-      "type": "string",
-      "title": "Tools Output Granularity",
-      "description": "What gets injected: 'title_desc' (name+reason) or 'full'",
-      "default": "title_desc"
-    },
-    "agents_input": {
-      "type": "string",
-      "title": "Agents Input Granularity",
-      "description": "What Haiku sees: 'title_desc' (name+description) or 'full' (agent markdown content, truncated)",
-      "default": "title_desc"
-    },
-    "agents_output": {
-      "type": "string",
-      "title": "Agents Output Granularity",
-      "description": "What gets injected: 'title_desc' (name+reason) or 'full' (agent markdown content)",
-      "default": "title_desc"
-    },
-    "agentic_mode": {
-      "type": "string",
-      "title": "Agentic Mode",
-      "description": "'parallel' (one Haiku call per dimension, better quality) or 'merged' (single call for all dimensions, faster ~5s vs ~20s)",
-      "default": "parallel"
-    },
-    "model": {
-      "type": "string",
-      "title": "Agentic Model",
-      "description": "Model for agentic backend (haiku/sonnet/opus)",
+      "title": "Recall Model",
+      "description": "Model for recall agentic backend (haiku/sonnet/opus).",
       "default": "haiku"
     },
-    "context_messages": {
+    "recall_effort": {
+      "type": "string",
+      "title": "Recall Effort",
+      "description": "Effort level for recall agentic calls: 'low' (faster/cheaper) or '' (default).",
+      "default": "low"
+    },
+    "recall_async": {
+      "type": "boolean",
+      "title": "Recall Async",
+      "description": "Run recall hook asynchronously. Default false (sync) because recall must inject context before agent responds.",
+      "default": false
+    },
+    "recall_agentic_mode": {
+      "type": "string",
+      "title": "Recall Agentic Mode",
+      "description": "'parallel' (one Haiku call per dimension) or 'merged' (single call for all dimensions, faster).",
+      "default": "parallel"
+    },
+    "recall_context_messages": {
       "type": "number",
-      "title": "Context Messages",
-      "description": "Number of recent conversation messages to include for search context",
+      "title": "Recall Context Messages",
+      "description": "Number of recent conversation messages to include for search context.",
       "default": 5,
       "min": 0,
       "max": 20
     },
-    "context_max_chars": {
+    "recall_context_max_chars": {
       "type": "number",
-      "title": "Context Max Chars",
-      "description": "Maximum characters of conversation context to send",
+      "title": "Recall Context Max Chars",
+      "description": "Maximum characters of conversation context to send.",
       "default": 2000,
       "min": 0,
       "max": 10000
     },
-    "embedding_model": {
-      "type": "string",
-      "title": "Embedding Model",
-      "description": "HuggingFace model name for embedding backend",
-      "default": "intfloat/multilingual-e5-small"
-    },
-    "embedding_python": {
-      "type": "string",
-      "title": "Embedding Python Path",
-      "description": "Path to Python with sentence-transformers installed",
-      "default": "~/miniconda3/envs/memory-recall/bin/python"
-    },
-    "embedding_threshold": {
+    "recall_max_content_chars": {
       "type": "number",
-      "title": "Embedding Threshold",
-      "description": "Cosine similarity threshold; below this falls back to reminder",
-      "default": 0.85,
-      "min": 0,
-      "max": 1
-    },
-    "embedding_top_k": {
-      "type": "number",
-      "title": "Embedding Top K",
-      "description": "Maximum number of results to return per dimension",
-      "default": 3,
-      "min": 1,
-      "max": 10
-    },
-    "embedding_device": {
-      "type": "string",
-      "title": "Embedding Device",
-      "description": "Inference device for embedding model (cpu/cuda)",
-      "default": "cpu"
-    },
-    "max_content_chars": {
-      "type": "number",
-      "title": "Max Content Chars",
-      "description": "Maximum total characters of injected memory content",
+      "title": "Recall Max Content Chars",
+      "description": "Maximum total characters of injected memory content.",
       "default": 9000,
       "min": 1000,
       "max": 10000
     },
+    "recall_memory_backend": {
+      "type": "string",
+      "title": "Memory Recall Backend",
+      "description": "'off', 'reminder' (list paths), 'agentic' (Haiku selects files), or 'embedding' (local RAG).",
+      "default": "agentic"
+    },
+    "recall_memory_input": {
+      "type": "string",
+      "title": "Memory Input Granularity",
+      "description": "What Haiku sees: 'title_desc' (name+description) or 'full' (entire file content).",
+      "default": "title_desc"
+    },
+    "recall_memory_output": {
+      "type": "string",
+      "title": "Memory Output Granularity",
+      "description": "What gets injected to main model: 'title_desc' or 'full' (entire file content).",
+      "default": "full"
+    },
+    "recall_skills_backend": {
+      "type": "string",
+      "title": "Skills Recall Backend",
+      "description": "'off', 'reminder' (list all), 'agentic' (Haiku selects), or 'embedding' (vector match).",
+      "default": "agentic"
+    },
+    "recall_skills_input": {
+      "type": "string",
+      "title": "Skills Input Granularity",
+      "description": "What Haiku sees: 'title_desc' (name+description) or 'full' (SKILL.md content, truncated).",
+      "default": "title_desc"
+    },
+    "recall_skills_output": {
+      "type": "string",
+      "title": "Skills Output Granularity",
+      "description": "What gets injected: 'title_desc' (name+reason) or 'full' (skill SKILL.md content).",
+      "default": "title_desc"
+    },
+    "recall_tools_backend": {
+      "type": "string",
+      "title": "Tools Recall Backend",
+      "description": "'off', 'reminder' (list all), 'agentic' (Haiku selects), or 'embedding' (vector match).",
+      "default": "agentic"
+    },
+    "recall_tools_input": {
+      "type": "string",
+      "title": "Tools Input Granularity",
+      "description": "What Haiku sees: 'title_desc' (name+description) or 'full' (full tool description).",
+      "default": "title_desc"
+    },
+    "recall_tools_output": {
+      "type": "string",
+      "title": "Tools Output Granularity",
+      "description": "What gets injected: 'title_desc' (name+reason) or 'full'.",
+      "default": "title_desc"
+    },
+    "recall_agents_backend": {
+      "type": "string",
+      "title": "Agents Recall Backend",
+      "description": "'off', 'reminder' (list all), 'agentic' (Haiku selects), or 'embedding' (vector match).",
+      "default": "agentic"
+    },
+    "recall_agents_input": {
+      "type": "string",
+      "title": "Agents Input Granularity",
+      "description": "What Haiku sees: 'title_desc' (name+description) or 'full' (agent markdown content, truncated).",
+      "default": "title_desc"
+    },
+    "recall_agents_output": {
+      "type": "string",
+      "title": "Agents Output Granularity",
+      "description": "What gets injected: 'title_desc' (name+reason) or 'full' (agent markdown content).",
+      "default": "title_desc"
+    },
+    "recall_embedding_model": {
+      "type": "string",
+      "title": "Recall Embedding Model",
+      "description": "HuggingFace model name for embedding backend.",
+      "default": "intfloat/multilingual-e5-small"
+    },
+    "recall_embedding_python": {
+      "type": "string",
+      "title": "Recall Embedding Python Path",
+      "description": "Path to Python with sentence-transformers installed.",
+      "default": "~/miniconda3/envs/memory-recall/bin/python"
+    },
+    "recall_embedding_threshold": {
+      "type": "number",
+      "title": "Recall Embedding Threshold",
+      "description": "Cosine similarity threshold; below this falls back to reminder.",
+      "default": 0.85,
+      "min": 0,
+      "max": 1
+    },
+    "recall_embedding_top_k": {
+      "type": "number",
+      "title": "Recall Embedding Top K",
+      "description": "Maximum number of results to return per dimension.",
+      "default": 3,
+      "min": 1,
+      "max": 10
+    },
+    "recall_embedding_device": {
+      "type": "string",
+      "title": "Recall Embedding Device",
+      "description": "Inference device for embedding model (cpu/cuda).",
+      "default": "cpu"
+    },
     "memory_save_enabled": {
       "type": "boolean",
       "title": "Memory Save Enabled",
-      "description": "Enable automatic memory saving after each assistant turn (Stop hook). Haiku analyzes conversations and persists valuable knowledge.",
+      "description": "Enable automatic memory saving after each assistant turn (Stop hook).",
+      "default": true
+    },
+    "memory_save_model": {
+      "type": "string",
+      "title": "Memory Save Model",
+      "description": "Model for memory save analysis (haiku/sonnet/opus).",
+      "default": "haiku"
+    },
+    "memory_save_effort": {
+      "type": "string",
+      "title": "Memory Save Effort",
+      "description": "Effort level for memory save calls: '' (default) or 'low'.",
+      "default": ""
+    },
+    "memory_save_async": {
+      "type": "boolean",
+      "title": "Memory Save Async",
+      "description": "Run memory save hook asynchronously. Default true -- save doesn't need to block.",
       "default": true
     },
     "memory_save_targets": {
       "type": "string",
       "title": "Memory Save Targets",
-      "description": "'native' (CC project memory), 'global' (plugin global-memory), or 'both'",
+      "description": "'native' (CC project memory), 'global' (plugin global-memory), or 'both'.",
       "default": "native"
-    },
-    "recall_effort": {
-      "type": "string",
-      "title": "Recall Effort",
-      "description": "Effort level for recall agentic calls: 'low' (faster/cheaper) or '' (default). Low works for simple schemas.",
-      "default": "low"
-    },
-    "memory_save_effort": {
-      "type": "string",
-      "title": "Memory Save Effort",
-      "description": "Effort level for memory save calls: '' (default, required for complex structured output) or 'low'. Note: 'low' breaks structured output with complex schemas.",
-      "default": ""
     },
     "memory_save_context_turns": {
       "type": "number",
       "title": "Memory Save Context Turns",
-      "description": "Number of recent conversation turns to provide to Haiku for analysis",
+      "description": "Number of recent conversation turns to provide for analysis.",
       "default": 3,
       "min": 1,
       "max": 10
@@ -193,14 +217,26 @@
     "pair_programmer_enabled": {
       "type": "boolean",
       "title": "Pair Programmer Enabled",
-      "description": "Enable PostToolUse sidecar pair programmer that evaluates agent actions against user preferences and past experience.",
+      "description": "Enable PostToolUse sidecar pair programmer that evaluates agent actions.",
       "default": true
     },
     "pair_programmer_model": {
       "type": "string",
       "title": "Pair Programmer Model",
-      "description": "Model for pair programmer evaluation (haiku/sonnet)",
+      "description": "Model for pair programmer evaluation (haiku/sonnet/opus).",
       "default": "haiku"
+    },
+    "pair_programmer_effort": {
+      "type": "string",
+      "title": "Pair Programmer Effort",
+      "description": "Effort level for pair programmer calls: '' (default) or 'low'.",
+      "default": ""
+    },
+    "pair_programmer_async": {
+      "type": "boolean",
+      "title": "Pair Programmer Async",
+      "description": "Run pair programmer hook asynchronously. Default true.",
+      "default": true
     },
     "pair_programmer_sample_rate": {
       "type": "number",
@@ -234,12 +270,6 @@
       "min": 500,
       "max": 10000
     },
-    "pair_programmer_effort": {
-      "type": "string",
-      "title": "Pair Programmer Effort",
-      "description": "Effort level for pair programmer calls. '' (default) required for reliable structured output.",
-      "default": ""
-    },
     "pair_programmer_max_tool_input_chars": {
       "type": "number",
       "title": "Pair Programmer Max Tool Input Chars",
@@ -272,49 +302,37 @@
       "min": 500,
       "max": 10000
     },
-    "recall_async": {
-      "type": "boolean",
-      "title": "Recall Async",
-      "description": "Run recall hook (UserPromptSubmit/SubagentStart) asynchronously. Default false (sync) because recall must inject context before agent responds.",
-      "default": false
-    },
-    "memory_save_async": {
-      "type": "boolean",
-      "title": "Memory Save Async",
-      "description": "Run memory save hook (Stop) asynchronously. Default true -- save doesn't need to block.",
-      "default": true
-    },
-    "pair_programmer_async": {
-      "type": "boolean",
-      "title": "Pair Programmer Async",
-      "description": "Run pair programmer hook (PostToolUse) asynchronously. Default true -- feedback arrives at next tool call instead of blocking current one.",
-      "default": true
-    },
     "curator_enabled": {
       "type": "boolean",
-      "title": "Memory Curator Enabled",
-      "description": "Enable periodic memory consolidation on Stop hook. Merges duplicates, deletes stale entries.",
+      "title": "Curator Enabled",
+      "description": "Enable periodic memory consolidation on Stop hook.",
       "default": true
     },
-    "curator_cooldown_h": {
-      "type": "number",
-      "title": "Curator Cooldown (hours)",
-      "description": "Minimum hours between curator runs. Default 1.",
-      "default": 1,
-      "min": 0,
-      "max": 48
+    "curator_model": {
+      "type": "string",
+      "title": "Curator Model",
+      "description": "Model for curator analysis (haiku/sonnet/opus).",
+      "default": "haiku"
     },
     "curator_effort": {
       "type": "string",
       "title": "Curator Effort",
-      "description": "Effort level for curator. '' (default) required for complex merge schemas.",
+      "description": "Effort level for curator: '' (default) or 'low'.",
       "default": ""
     },
     "curator_async": {
       "type": "boolean",
       "title": "Curator Async",
-      "description": "Run curator asynchronously. Default true -- consolidation doesn't need to block.",
+      "description": "Run curator asynchronously. Default true.",
       "default": true
+    },
+    "curator_cooldown_h": {
+      "type": "number",
+      "title": "Curator Cooldown (hours)",
+      "description": "Minimum hours between curator runs.",
+      "default": 1,
+      "min": 0,
+      "max": 48
     }
   }
 }

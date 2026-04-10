@@ -45,11 +45,11 @@ DIMENSIONS = ["memory", "skills", "tools", "agents"]
 # ---------------------------------------------------------------------------
 
 
-async def dispatch_one(dim, backend, resources, query, context, config, memory_dirs):
+async def dispatch_one(dim, backend, resources, query, context, rc, memory_dirs):
     """Run recall for a single dimension with its configured backend.
 
+    rc is config['recall'] (the recall subsystem dict).
     Returns (dim, result, elapsed_s, usage_dict).
-    usage_dict has token/cost info for agentic, empty dict otherwise.
     """
     t0 = time.time()
     usage = {}
@@ -58,24 +58,25 @@ async def dispatch_one(dim, backend, resources, query, context, config, memory_d
         result = recall_reminder(dim, resources)
 
     elif backend == "agentic":
-        input_gran = config.get(f"{dim}_input", "title_desc")
-        result, usage = await recall_agentic(dim, resources, query, context, config["model"], input_gran, config.get("recall_effort", "low"))
+        input_gran = rc[dim]['input']
+        result, usage = await recall_agentic(dim, resources, query, context, rc["model"], input_gran, rc["effort"])
 
     elif backend == "embedding":
+        emb = rc['embedding']
         ensure_daemon_running(
             SOCKET_PATH, PLUGIN_ROOT, DATA_DIR,
-            config["embedding_python"], config["embedding_model"], config["embedding_device"],
+            emb["python"], emb["model"], emb["device"],
         )
-        input_gran = config.get(f"{dim}_input", "title_desc")
         if dim == "memory":
             result = recall_embedding_memory(
                 resources, query, SOCKET_PATH, memory_dirs,
-                config["embedding_top_k"], config["embedding_threshold"],
+                emb["top_k"], emb["threshold"],
             )
         else:
+            input_gran = rc[dim]['input']
             result = recall_embedding_generic(
                 dim, resources, query, SOCKET_PATH,
-                config["embedding_top_k"], config["embedding_threshold"],
+                emb["top_k"], emb["threshold"],
                 input_gran,
             )
 
@@ -86,19 +87,22 @@ async def dispatch_one(dim, backend, resources, query, context, config, memory_d
     return dim, result, elapsed, usage
 
 
-async def run_all(tasks, query, context, config, memory_dirs):
-    """Run all dimension recalls. Parallel or merged depending on agentic_mode."""
+async def run_all(tasks, query, context, rc, memory_dirs):
+    """Run all dimension recalls. Parallel or merged depending on agentic_mode.
+
+    rc is config['recall'] (the recall subsystem dict).
+    """
     # Split tasks into agentic vs non-agentic
     agentic_tasks = [(dim, resources) for dim, backend, resources in tasks if backend == "agentic"]
     other_tasks = [(dim, backend, resources) for dim, backend, resources in tasks if backend != "agentic"]
 
-    use_merged = config.get("agentic_mode") == "merged" and len(agentic_tasks) >= 2
+    use_merged = rc.get("agentic_mode") == "merged" and len(agentic_tasks) >= 2
 
     if use_merged and agentic_tasks:
         # Single Haiku call for all agentic dimensions
         t0 = time.time()
         merged_results = await recall_agentic_merged(
-            agentic_tasks, query, context, config["model"], config.get("recall_effort", "low")
+            agentic_tasks, query, context, rc["model"], rc["effort"]
         )
         elapsed = round(time.time() - t0, 2)
         # Convert to standard (dim, result, elapsed, usage) tuples.
@@ -113,14 +117,14 @@ async def run_all(tasks, query, context, config, memory_dirs):
     else:
         # Parallel: one Haiku call per dimension (existing behavior)
         agentic_coros = [
-            dispatch_one(dim, "agentic", resources, query, context, config, memory_dirs)
+            dispatch_one(dim, "agentic", resources, query, context, rc, memory_dirs)
             for dim, resources in agentic_tasks
         ]
         agentic_tuples = list(await asyncio.gather(*agentic_coros)) if agentic_coros else []
 
     # Run non-agentic tasks (reminder/embedding) in parallel
     other_coros = [
-        dispatch_one(dim, backend, resources, query, context, config, memory_dirs)
+        dispatch_one(dim, backend, resources, query, context, rc, memory_dirs)
         for dim, backend, resources in other_tasks
     ]
     other_tuples = list(await asyncio.gather(*other_coros)) if other_coros else []
@@ -193,9 +197,12 @@ def format_recommendation_result(result, resources=None, output_granularity="tit
     return None
 
 
-def merge_results(results, proj_mem_dir, global_mem_dir, max_chars, config=None, dim_resources=None):
-    """Merge all dimension results into a single additionalContext string."""
-    config = config or {}
+def merge_results(results, proj_mem_dir, global_mem_dir, max_chars, rc=None, dim_resources=None):
+    """Merge all dimension results into a single additionalContext string.
+
+    rc is config['recall'] (the recall subsystem dict).
+    """
+    rc = rc or {}
     dim_resources = dim_resources or {}
     sections = []
 
@@ -204,12 +211,12 @@ def merge_results(results, proj_mem_dir, global_mem_dir, max_chars, config=None,
         if dim == "memory":
             text = format_memory_result(
                 result, proj_mem_dir, global_mem_dir, remaining,
-                config.get("memory_output", "full"),
+                rc.get("memory", {}).get("output", "full"),
             )
         else:
             text = format_recommendation_result(
                 result, dim_resources.get(dim, []),
-                config.get(f"{dim}_output", "title_desc"),
+                rc.get(dim, {}).get("output", "title_desc"),
                 remaining,
             )
         if text:
@@ -256,9 +263,14 @@ def main():
     event = hook_input.get("hook_event_name", "UserPromptSubmit")
 
     config = load_config()
-    maybe_go_async("recall_async", config)
+    rc = config['recall']
+    maybe_go_async(rc['async'])
     cwd = hook_input.get("cwd", "")
     transcript_path = hook_input.get("transcript_path", "")
+
+    if not rc['enabled']:
+        write_status("recall", "done", hook_input, skipped=True)
+        sys.exit(0)
 
     if event == "SubagentStart":
         # Wait for transcript flush (void recordTranscript is fire-and-forget, ~100ms)
@@ -271,7 +283,7 @@ def main():
         write_status("recall", "done", hook_input, skipped=True)
         sys.exit(0)
 
-    write_status("recall", "running", hook_input, timeout_s=30)
+    write_status("recall", "running", hook_input, timeout_s=60)
 
     # Discover resources for each enabled dimension
     tasks = []
@@ -280,7 +292,7 @@ def main():
     discovery_counts = {}
 
     for dim in DIMENSIONS:
-        backend = config[dim]
+        backend = rc[dim]['backend']
         if backend == "off":
             continue
 
@@ -311,11 +323,11 @@ def main():
     context = ""
     needs_context = any(b in ("agentic", "embedding") for _, b, _ in tasks)
     if needs_context:
-        context = extract_context(transcript_path, config["context_messages"], config["context_max_chars"])
+        context = extract_context(transcript_path, rc["context_messages"], rc["context_max_chars"])
 
     # Run all in parallel
     t_before_recall = time.time()
-    raw_results = asyncio.run(run_all(tasks, prompt, context, config, memory_dirs))
+    raw_results = asyncio.run(run_all(tasks, prompt, context, rc, memory_dirs))
     t_after_recall = time.time()
 
     # Unpack: raw_results is [(dim, result, per_dim_elapsed, usage), ...]
@@ -327,7 +339,7 @@ def main():
 
     # Merge output
     dim_resources = {dim: resources for dim, _, resources in tasks}
-    additional_context = merge_results(results, proj_mem_dir, global_mem_dir, config["max_content_chars"], config, dim_resources)
+    additional_context = merge_results(results, proj_mem_dir, global_mem_dir, rc["max_content_chars"], rc, dim_resources)
 
     # Compute totals
     total_input_tokens = sum(u.get("input_tokens", 0) for u in per_dim_usage.values())
@@ -377,7 +389,7 @@ def main():
         }
     }
     label = "; ".join(summary_parts) if summary_parts else "nothing relevant"
-    recall_model = config.get("model", "haiku") if total_cost_usd > 0 else ""
+    recall_model = rc["model"] if total_cost_usd > 0 else ""
     write_status("recall", "done", hook_input,
                  summary=label[:120], elapsed_s=t_elapsed,
                  cost_usd=total_cost_usd, model=recall_model)

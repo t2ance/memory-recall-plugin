@@ -253,12 +253,13 @@ def main():
         return
 
     config = load_plugin_config()
-    maybe_go_async("memory_save_async", config)
-    if not config["memory_save_enabled"]:
+    ms = config['memory_save']
+    maybe_go_async(ms['async'])
+    if not ms['enabled']:
         write_status("memory_save", "done", hook_input, skipped=True)
         return
 
-    write_status("memory_save", "running", hook_input, timeout_s=120)
+    write_status("memory_save", "running", hook_input, timeout_s=300)
 
     cwd = hook_input.get("cwd", "")
     last_msg = hook_input.get("last_assistant_message", "")
@@ -268,7 +269,7 @@ def main():
     transcript_path = hook_input.get("transcript_path", "")
 
     # 1. Extract conversation context
-    turns = extract_messages(transcript_path, config["memory_save_context_turns"])
+    turns = extract_messages(transcript_path, ms["context_turns"])
     if not turns:
         turns = [{"role": "assistant", "text": last_msg}]
 
@@ -277,7 +278,7 @@ def main():
         turns[-1]["text"] = last_msg
 
     # 2. Read existing memory index
-    targets = config["memory_save_targets"]
+    targets = ms["targets"]
     proj_dir, glob_dir = compute_memory_dirs(cwd)
     target_dirs = []
     if targets in ("native", "both"):
@@ -294,8 +295,8 @@ def main():
     prompt = build_prompt(turns, memory_entries)
     t_haiku = time.time()
     parsed, usage = asyncio.run(
-        call_sdk_haiku(prompt, SYSTEM_PROMPT, MEMORY_SAVE_SCHEMA, config["model"],
-                       effort=config["memory_save_effort"])
+        call_sdk_haiku(prompt, SYSTEM_PROMPT, MEMORY_SAVE_SCHEMA, ms["model"],
+                       effort=ms["effort"])
     )
     haiku_s = round(time.time() - t_haiku, 2)
 
@@ -327,7 +328,7 @@ def main():
         "elapsed_s": round(time.time() - t_start, 2),
     })
 
-    save_model = config.get("model", "haiku")
+    save_model = ms["model"]
     save_cost = usage.get("cost_usd", 0) if usage else 0
     save_elapsed = round(time.time() - t_start, 2)
     save_summary = ", ".join(f"{a['action']} {a['file']}" for a in executed) if executed else "nothing to save"

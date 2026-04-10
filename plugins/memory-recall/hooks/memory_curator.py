@@ -409,10 +409,10 @@ def rebuild_index(memory_dir):
 # ---------------------------------------------------------------------------
 
 
-async def run_pipeline(memory_entries, proj_dir, hook_input, config):
-    """Run the 3-call curator pipeline."""
-    model = config.get("model", "haiku")
-    effort = config.get("curator_effort", "")
+async def run_pipeline(memory_entries, proj_dir, hook_input, cu):
+    """Run the 3-call curator pipeline. cu is config['curator']."""
+    model = cu['model']
+    effort = cu['effort']
     cwd = hook_input.get("cwd", "")
     transcript_path = hook_input.get("transcript_path", "")
     total_usage = {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0}
@@ -528,12 +528,13 @@ def main():
         return
 
     config = load_plugin_config()
-    maybe_go_async("curator_async", config)
+    cu = config['curator']
+    maybe_go_async(cu['async'])
 
-    if not config.get("curator_enabled", True):
+    if not cu['enabled']:
         return
 
-    cooldown_h = config.get("curator_cooldown_h", DEFAULT_COOLDOWN_H)
+    cooldown_h = cu['cooldown_h']
     if not check_cooldown(cooldown_h):
         return
 
@@ -560,7 +561,7 @@ def main():
 
     # Run 3-call pipeline
     result, usage, error = asyncio.run(
-        run_pipeline(memory_entries, proj_dir, hook_input, config)
+        run_pipeline(memory_entries, proj_dir, hook_input, cu)
     )
 
     if error:
@@ -600,7 +601,7 @@ def main():
         summary = f"dry run: {n_del} delete, {n_merge} merge, {n_override} overrides"
         write_status("curator", "done", hook_input, summary=summary,
                      elapsed_s=elapsed, cost_usd=usage.get("cost_usd", 0),
-                     model=config.get("model", "haiku"))
+                     model=cu['model'])
         return
 
     # Execute
@@ -633,7 +634,7 @@ def main():
     write_status("curator", "done", hook_input,
                  summary=summary, elapsed_s=elapsed,
                  cost_usd=usage.get("cost_usd", 0),
-                 model=config.get("model", "haiku"))
+                 model=cu['model'])
 
 
 if __name__ == "__main__":

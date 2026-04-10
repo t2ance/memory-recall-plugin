@@ -39,9 +39,9 @@ def write_log(entry):
         f.write(json.dumps(entry, indent=2, ensure_ascii=False) + "\n\n")
 
 
-def maybe_go_async(config_key, config):
-    """If config_key is truthy, emit dynamic async signal so CC backgrounds this hook."""
-    if config.get(config_key, False):
+def maybe_go_async(is_async):
+    """If is_async is truthy, emit dynamic async signal so CC backgrounds this hook."""
+    if is_async:
         print(json.dumps({"async": True}))
         sys.stdout.flush()
 
@@ -155,21 +155,74 @@ def _cast(env_val, spec_type, default):
     return os.path.expanduser(env_val)
 
 
+_SUBSYSTEM_PREFIXES = [
+    ('pair_programmer_', 'pair_programmer'),
+    ('memory_save_', 'memory_save'),
+    ('curator_', 'curator'),
+    ('recall_', 'recall'),
+]
+
+_RECALL_DIMENSIONS = ['memory', 'skills', 'tools', 'agents']
+
+
 def load_plugin_config():
-    """Load plugin config: env vars override plugin.json defaults."""
+    """Load plugin config: env vars override plugin.json defaults.
+
+    Returns a hierarchical dict keyed by subsystem:
+      config['recall']['model'], config['memory_save']['enabled'], etc.
+    Recall dimensions are nested: config['recall']['memory']['backend'].
+    Recall embedding is nested: config['recall']['embedding']['model'].
+    """
     schema = _load_plugin_schema()
-    config = {}
+
+    # 1. Read flat values from env vars / defaults
+    flat = {}
     for key, spec in schema.items():
         env_key = f"CLAUDE_PLUGIN_OPTION_{key.upper()}"
         env_val = os.environ.get(env_key)
         spec_type = spec.get("type", "string")
         default = spec.get("default")
         if env_val is not None:
-            config[key] = _cast(env_val, spec_type, default)
+            flat[key] = _cast(env_val, spec_type, default)
         elif spec_type == "string" and isinstance(default, str):
-            config[key] = os.path.expanduser(default)
+            flat[key] = os.path.expanduser(default)
         else:
-            config[key] = default
+            flat[key] = default
+
+    # 2. Parse flat keys into hierarchical dict
+    config = {}
+    for flat_key, value in flat.items():
+        subsystem = None
+        remainder = flat_key
+        for prefix, sub_name in _SUBSYSTEM_PREFIXES:
+            if flat_key.startswith(prefix):
+                subsystem = sub_name
+                remainder = flat_key[len(prefix):]
+                break
+        assert subsystem is not None, f"Config key without subsystem prefix: {flat_key}"
+
+        sub = config.setdefault(subsystem, {})
+
+        if subsystem == 'recall':
+            # Check recall dimension sub-groups: memory_*, skills_*, tools_*, agents_*
+            matched_dim = False
+            for dim in _RECALL_DIMENSIONS:
+                dim_prefix = dim + '_'
+                if remainder.startswith(dim_prefix):
+                    dim_field = remainder[len(dim_prefix):]
+                    sub.setdefault(dim, {})[dim_field] = value
+                    matched_dim = True
+                    break
+            if matched_dim:
+                continue
+            # Check embedding sub-group: embedding_*
+            if remainder.startswith('embedding_'):
+                embed_field = remainder[len('embedding_'):]
+                sub.setdefault('embedding', {})[embed_field] = value
+                continue
+
+        sub[remainder] = value
+
     return config
 
 

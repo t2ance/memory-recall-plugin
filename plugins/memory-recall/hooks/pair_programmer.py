@@ -131,9 +131,9 @@ def write_state(state):
         json.dump(state, f)
 
 
-def check_cooldown(config):
-    """Returns (passed, remaining_seconds)."""
-    cooldown = config.get("pair_programmer_cooldown_s", 0)
+def check_cooldown(pp):
+    """Returns (passed, remaining_seconds). pp is config['pair_programmer']."""
+    cooldown = pp['cooldown_s']
     if cooldown <= 0:
         return True, 0
     state = read_state()
@@ -148,13 +148,13 @@ def check_cooldown(config):
 # Gate logic
 # ---------------------------------------------------------------------------
 
-def should_evaluate(hook_input, config):
-    """Returns (should_eval, skip_reason_or_None).
+def should_evaluate(hook_input, pp):
+    """Returns (should_eval, skip_reason_or_None). pp is config['pair_programmer'].
 
     skip_reason=None  -> silent skip (disabled/sub-agent): no status line.
     skip_reason=str   -> visible skip (cooldown/sampling): show reason in status.
     """
-    if not config.get("pair_programmer_enabled", True):
+    if not pp['enabled']:
         return False, None
 
     # Sub-agent tool calls are irrelevant to the user
@@ -162,12 +162,12 @@ def should_evaluate(hook_input, config):
         return False, None
 
     # Sampling
-    sample_rate = config.get("pair_programmer_sample_rate", 1.0)
+    sample_rate = pp['sample_rate']
     if sample_rate < 1.0 and random.random() > sample_rate:
         return False, "sampled out"
 
     # Cooldown — store absolute end timestamp for dynamic countdown in statusline
-    passed, remaining = check_cooldown(config)
+    passed, remaining = check_cooldown(pp)
     if not passed:
         cooldown_until = int(time.time()) + remaining
         return False, f"cooldown:{cooldown_until}"
@@ -179,15 +179,16 @@ def should_evaluate(hook_input, config):
 # Trajectory building
 # ---------------------------------------------------------------------------
 
-def build_trajectory(hook_input, config):
+def build_trajectory(hook_input, pp):
+    """pp is config['pair_programmer']."""
     parts = []
 
     # Recent conversation context from transcript
     transcript_path = hook_input.get("transcript_path", "")
     context = extract_context(
         transcript_path,
-        config.get("pair_programmer_context_messages", 5),
-        config.get("pair_programmer_context_max_chars", 3000),
+        pp['context_messages'],
+        pp['context_max_chars'],
     )
     if context:
         parts.append(f"## Recent Conversation\n{context}")
@@ -202,8 +203,8 @@ def build_trajectory(hook_input, config):
     tool_output_str = raw_output if isinstance(raw_output, str) else json.dumps(raw_output, indent=2, ensure_ascii=False)
 
     # Truncate large values
-    max_input = config.get("pair_programmer_max_tool_input_chars", 2000)
-    max_output = config.get("pair_programmer_max_tool_output_chars", 1000)
+    max_input = pp['max_tool_input_chars']
+    max_output = pp['max_tool_output_chars']
     if len(tool_input_str) > max_input:
         tool_input_str = tool_input_str[:max_input] + "\n...(truncated)"
     if len(tool_output_str) > max_output:
@@ -220,15 +221,15 @@ def build_trajectory(hook_input, config):
 # Memory recall for pair programmer
 # ---------------------------------------------------------------------------
 
-async def recall_context(trajectory, cwd, config):
-    """Recall memories relevant to the current trajectory."""
+async def recall_context(trajectory, cwd, pp):
+    """Recall memories relevant to the current trajectory. pp is config['pair_programmer']."""
     resources, proj_mem_dir, global_mem_dir = discover_memory(cwd)
     if not resources:
         return "", {}
 
     result, usage = await recall_agentic(
         "memory", resources, trajectory, "",
-        config.get("pair_programmer_model", "haiku"),
+        pp['model'],
         input_granularity="title_desc",
         effort="low",
     )
@@ -237,8 +238,8 @@ async def recall_context(trajectory, cwd, config):
         return "", usage
 
     parts = []
-    max_files = config.get("pair_programmer_max_recall_files", 5)
-    max_file_chars = config.get("pair_programmer_max_memory_file_chars", 2000)
+    max_files = pp['max_recall_files']
+    max_file_chars = pp['max_memory_file_chars']
     for path in result.get("files", [])[:max_files]:
         if not os.path.exists(path):
             continue
@@ -254,8 +255,8 @@ async def recall_context(trajectory, cwd, config):
 # Evaluation
 # ---------------------------------------------------------------------------
 
-async def evaluate(trajectory, memories_text, config):
-    """Single merged Haiku call evaluating all 3 dimensions."""
+async def evaluate(trajectory, memories_text, pp):
+    """Single merged Haiku call evaluating all 3 dimensions. pp is config['pair_programmer']."""
     prompt_parts = [trajectory]
     if memories_text:
         prompt_parts.append(f"## User Preferences & Past Experience (from Memory Bank)\n{memories_text}")
@@ -264,8 +265,8 @@ async def evaluate(trajectory, memories_text, config):
 
     parsed, usage = await call_sdk_haiku(
         prompt, SYSTEM_PROMPT, EVAL_SCHEMA,
-        model=config.get("pair_programmer_model", "haiku"),
-        effort=config.get("pair_programmer_effort", ""),
+        model=pp['model'],
+        effort=pp['effort'],
     )
     return parsed, usage
 
@@ -322,9 +323,10 @@ def main():
         return
 
     config = load_plugin_config()
-    maybe_go_async("pair_programmer_async", config)
+    pp = config['pair_programmer']
+    maybe_go_async(pp['async'])
 
-    should_eval, skip_reason = should_evaluate(hook_input, config)
+    should_eval, skip_reason = should_evaluate(hook_input, pp)
     if not should_eval:
         if skip_reason is not None:
             if skip_reason.startswith("cooldown:"):
@@ -336,20 +338,20 @@ def main():
                 write_status("pair_programmer", "done", hook_input, summary=skip_reason)
         return
 
-    write_status("pair_programmer", "running", hook_input, timeout_s=30)
+    write_status("pair_programmer", "running", hook_input, timeout_s=300)
 
     cwd = hook_input.get("cwd", "")
     if not cwd:
         return
 
     # Build trajectory
-    trajectory = build_trajectory(hook_input, config)
+    trajectory = build_trajectory(hook_input, pp)
 
     # Recall relevant memories (1 SDK call)
-    memories_text, recall_usage = asyncio.run(recall_context(trajectory, cwd, config))
+    memories_text, recall_usage = asyncio.run(recall_context(trajectory, cwd, pp))
 
     # Evaluate all dimensions (1 SDK call)
-    parsed, eval_usage = asyncio.run(evaluate(trajectory, memories_text, config))
+    parsed, eval_usage = asyncio.run(evaluate(trajectory, memories_text, pp))
 
     # Update cooldown state
     write_state({"last_eval_ts": time.time()})
@@ -383,7 +385,7 @@ def main():
 
     pair_programmer_cost = (eval_usage.get("cost_usd", 0) if eval_usage else 0) + \
               (recall_usage.get("cost_usd", 0) if recall_usage else 0)
-    pair_programmer_model = config.get("pair_programmer_model", "haiku")
+    pair_programmer_model = pp['model']
     write_status("pair_programmer", "done", hook_input,
                  summary=status_summary,
                  elapsed_s=elapsed, cost_usd=pair_programmer_cost, model=pair_programmer_model)
