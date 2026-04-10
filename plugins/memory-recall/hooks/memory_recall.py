@@ -265,6 +265,7 @@ def main():
         prompt = hook_input.get("prompt", "")
 
     if not cwd:
+        write_status("recall", "done", hook_input, summary="skipped: no cwd")
         sys.exit(0)
 
     config = load_config()

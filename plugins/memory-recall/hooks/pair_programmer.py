@@ -297,12 +297,14 @@ def main():
     write_status("pp", "running", hook_input, timeout_s=30)
 
     if hook_input.get("hook_event_name") != "PostToolUse":
+        write_status("pp", "done", hook_input, summary="skipped: not PostToolUse")
         return
 
     config = load_plugin_config()
     maybe_go_async("pp_async", config)
 
     if not should_evaluate(hook_input, config):
+        write_status("pp", "done", hook_input, summary="skipped: cooldown/sampling")
         return
 
     cwd = hook_input.get("cwd", "")

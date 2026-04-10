@@ -230,13 +230,16 @@ def main():
     event = hook_input.get("hook_event_name", "")
 
     if event != "Stop":
+        write_status("auto_save", "done", hook_input, summary="skipped: not Stop")
         return
     if hook_input.get("stop_hook_active", False):
+        write_status("auto_save", "done", hook_input, summary="skipped: stop_hook_active")
         return
 
     config = load_plugin_config()
     maybe_go_async("memory_save_async", config)
     if not config["auto_save_enabled"]:
+        write_status("auto_save", "done", hook_input, summary="skipped: disabled")
         return
 
     cwd = hook_input.get("cwd", "")
