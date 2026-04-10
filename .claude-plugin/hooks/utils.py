@@ -46,7 +46,7 @@ def maybe_go_async(config_key, config):
         sys.stdout.flush()
 
 
-def write_status(hook_name, state, hook_input, summary="", elapsed_s=0, cost_usd=0, model="", timeout_s=60, skipped=False, _cache={}):
+def write_status(hook_name, state, hook_input, summary="", elapsed_s=0, cost_usd=0, model="", timeout_s=60, skipped=False, _cache={}, **extra):
     """Write hook status to a JSON file for statusLine visibility.
 
     Design invariant: EVERY code path produces a complete record with all
@@ -111,6 +111,8 @@ def write_status(hook_name, state, hook_input, summary="", elapsed_s=0, cost_usd
         "skipped_count": skipped_count,
     }
 
+    data.update(extra)
+
     tmp_path = path + ".tmp"
     with open(tmp_path, "w") as f:
         f.write(json.dumps(data))
@@ -129,68 +131,46 @@ def hook_main(fn):
 
 
 # ---------------------------------------------------------------------------
-# Config
+# Config — plugin.json is the single source of truth for defaults
 # ---------------------------------------------------------------------------
 
+_PLUGIN_JSON_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    '..', '.claude-plugin', 'plugin.json'
+)
+
+
+def _load_plugin_schema():
+    """Read userConfig schema from plugin.json."""
+    with open(_PLUGIN_JSON_PATH) as f:
+        return json.load(f).get("userConfig", {})
+
+
+def _cast(env_val, spec_type, default):
+    """Cast env-var string to the Python type declared in plugin.json."""
+    if spec_type == "boolean":
+        return env_val.lower() not in ("false", "0", "")
+    if spec_type == "number":
+        return float(env_val) if isinstance(default, float) else int(float(env_val))
+    return os.path.expanduser(env_val)
+
+
 def load_plugin_config():
-    """Load all plugin config from env vars (recall + auto-save options)."""
-    return {
-        # Recall backends
-        "memory": os.environ.get("CLAUDE_PLUGIN_OPTION_MEMORY", "reminder"),
-        "skills": os.environ.get("CLAUDE_PLUGIN_OPTION_SKILLS", "off"),
-        "tools": os.environ.get("CLAUDE_PLUGIN_OPTION_TOOLS", "off"),
-        "agents": os.environ.get("CLAUDE_PLUGIN_OPTION_AGENTS", "off"),
-        # Recall options
-        "agentic_mode": os.environ.get("CLAUDE_PLUGIN_OPTION_AGENTIC_MODE", "parallel"),
-        "memory_input": os.environ.get("CLAUDE_PLUGIN_OPTION_MEMORY_INPUT", "title_desc"),
-        "memory_output": os.environ.get("CLAUDE_PLUGIN_OPTION_MEMORY_OUTPUT", "full"),
-        "skills_input": os.environ.get("CLAUDE_PLUGIN_OPTION_SKILLS_INPUT", "title_desc"),
-        "skills_output": os.environ.get("CLAUDE_PLUGIN_OPTION_SKILLS_OUTPUT", "title_desc"),
-        "tools_input": os.environ.get("CLAUDE_PLUGIN_OPTION_TOOLS_INPUT", "title_desc"),
-        "tools_output": os.environ.get("CLAUDE_PLUGIN_OPTION_TOOLS_OUTPUT", "title_desc"),
-        "agents_input": os.environ.get("CLAUDE_PLUGIN_OPTION_AGENTS_INPUT", "title_desc"),
-        "agents_output": os.environ.get("CLAUDE_PLUGIN_OPTION_AGENTS_OUTPUT", "title_desc"),
-        "model": os.environ.get("CLAUDE_PLUGIN_OPTION_MODEL", "haiku"),
-        "context_messages": int(os.environ.get("CLAUDE_PLUGIN_OPTION_CONTEXT_MESSAGES", "5")),
-        "context_max_chars": int(os.environ.get("CLAUDE_PLUGIN_OPTION_CONTEXT_MAX_CHARS", "2000")),
-        "max_content_chars": int(os.environ.get("CLAUDE_PLUGIN_OPTION_MAX_CONTENT_CHARS", "9000")),
-        # Embedding
-        "embedding_model": os.environ.get("CLAUDE_PLUGIN_OPTION_EMBEDDING_MODEL", "intfloat/multilingual-e5-small"),
-        "embedding_python": os.path.expanduser(
-            os.environ.get("CLAUDE_PLUGIN_OPTION_EMBEDDING_PYTHON", "~/miniconda3/envs/memory-recall/bin/python")
-        ),
-        "embedding_threshold": float(os.environ.get("CLAUDE_PLUGIN_OPTION_EMBEDDING_THRESHOLD", "0.85")),
-        "embedding_top_k": int(os.environ.get("CLAUDE_PLUGIN_OPTION_EMBEDDING_TOP_K", "3")),
-        "embedding_device": os.environ.get("CLAUDE_PLUGIN_OPTION_EMBEDDING_DEVICE", "cpu"),
-        # Memory Save
-        "memory_save_enabled": os.environ.get("CLAUDE_PLUGIN_OPTION_MEMORY_SAVE_ENABLED", "true") != "false",
-        "memory_save_targets": os.environ.get("CLAUDE_PLUGIN_OPTION_MEMORY_SAVE_TARGETS", "native"),
-        "memory_save_context_turns": int(os.environ.get("CLAUDE_PLUGIN_OPTION_MEMORY_SAVE_CONTEXT_TURNS", "3")),
-        # Effort: "low" is cheaper/faster but incompatible with complex structured output
-        "recall_effort": os.environ.get("CLAUDE_PLUGIN_OPTION_RECALL_EFFORT", ""),
-        "memory_save_effort": os.environ.get("CLAUDE_PLUGIN_OPTION_MEMORY_SAVE_EFFORT", ""),  # empty = default (no effort param)
-        # Pair Programmer
-        "pair_programmer_enabled": os.environ.get("CLAUDE_PLUGIN_OPTION_PAIR_PROGRAMMER_ENABLED", "false") != "false",
-        "pair_programmer_model": os.environ.get("CLAUDE_PLUGIN_OPTION_PAIR_PROGRAMMER_MODEL", "haiku"),
-        "pair_programmer_sample_rate": float(os.environ.get("CLAUDE_PLUGIN_OPTION_PAIR_PROGRAMMER_SAMPLE_RATE", "1.0")),
-        "pair_programmer_cooldown_s": float(os.environ.get("CLAUDE_PLUGIN_OPTION_PAIR_PROGRAMMER_COOLDOWN_S", "120")),
-        "pair_programmer_context_messages": int(os.environ.get("CLAUDE_PLUGIN_OPTION_PAIR_PROGRAMMER_CONTEXT_MESSAGES", "5")),
-        "pair_programmer_context_max_chars": int(os.environ.get("CLAUDE_PLUGIN_OPTION_PAIR_PROGRAMMER_CONTEXT_MAX_CHARS", "3000")),
-        "pair_programmer_effort": os.environ.get("CLAUDE_PLUGIN_OPTION_PAIR_PROGRAMMER_EFFORT", ""),
-        "pair_programmer_max_tool_input_chars": int(os.environ.get("CLAUDE_PLUGIN_OPTION_PAIR_PROGRAMMER_MAX_TOOL_INPUT_CHARS", "2000")),
-        "pair_programmer_max_tool_output_chars": int(os.environ.get("CLAUDE_PLUGIN_OPTION_PAIR_PROGRAMMER_MAX_TOOL_OUTPUT_CHARS", "1000")),
-        "pair_programmer_max_recall_files": int(os.environ.get("CLAUDE_PLUGIN_OPTION_PAIR_PROGRAMMER_MAX_RECALL_FILES", "5")),
-        "pair_programmer_max_memory_file_chars": int(os.environ.get("CLAUDE_PLUGIN_OPTION_PAIR_PROGRAMMER_MAX_MEMORY_FILE_CHARS", "2000")),
-        # Memory Curator
-        "curator_enabled": os.environ.get("CLAUDE_PLUGIN_OPTION_CURATOR_ENABLED", "true") != "false",
-        "curator_cooldown_h": float(os.environ.get("CLAUDE_PLUGIN_OPTION_CURATOR_COOLDOWN_H", "4")),
-        "curator_effort": os.environ.get("CLAUDE_PLUGIN_OPTION_CURATOR_EFFORT", ""),
-        # Async mode per hook
-        "recall_async": os.environ.get("CLAUDE_PLUGIN_OPTION_RECALL_ASYNC", "false") != "false",
-        "memory_save_async": os.environ.get("CLAUDE_PLUGIN_OPTION_MEMORY_SAVE_ASYNC", "true") != "false",
-        "pair_programmer_async": os.environ.get("CLAUDE_PLUGIN_OPTION_PAIR_PROGRAMMER_ASYNC", "true") != "false",
-        "curator_async": os.environ.get("CLAUDE_PLUGIN_OPTION_CURATOR_ASYNC", "true") != "false",
-    }
+    """Load plugin config: env vars override plugin.json defaults."""
+    schema = _load_plugin_schema()
+    config = {}
+    for key, spec in schema.items():
+        env_key = f"CLAUDE_PLUGIN_OPTION_{key.upper()}"
+        env_val = os.environ.get(env_key)
+        spec_type = spec.get("type", "string")
+        default = spec.get("default")
+        if env_val is not None:
+            config[key] = _cast(env_val, spec_type, default)
+        elif spec_type == "string" and isinstance(default, str):
+            config[key] = os.path.expanduser(default)
+        else:
+            config[key] = default
+    return config
 
 
 # ---------------------------------------------------------------------------
@@ -370,7 +350,8 @@ async def call_sdk_haiku(prompt, system_prompt, output_schema, model="haiku", ma
                 }
                 parsed = msg.structured_output
                 if msg.result:
-                    raw_texts.append(f"[result]: {msg.result[:500]}")
+                    # Keep full result text for JSON fallback parsing
+                    raw_texts.append(msg.result)
     except Exception as e:
         write_log({"event": "sdk_error",
                     "error": str(e)[:300],
@@ -378,10 +359,20 @@ async def call_sdk_haiku(prompt, system_prompt, output_schema, model="haiku", ma
                     "raw_texts": raw_texts[:5] if raw_texts else []})
         raise
 
-    # Save raw reasoning to debug log when structured_output is None
+    # Fallback: if structured_output is None, try parsing raw text as JSON
+    if parsed is None and raw_texts:
+        for text in raw_texts:
+            # Strip [result]: prefix if present
+            if text.startswith("[result]: "):
+                text = text[len("[result]: "):]
+            fallback = parse_json(text)
+            if fallback:
+                parsed = fallback
+                break
+
     if parsed is None and raw_texts:
         write_log({"event": "sdk_no_structured_output",
-                    "raw_texts": raw_texts[:5],
+                    "raw_texts": [t[:500] for t in raw_texts[:5]],
                     "usage": usage})
 
     return parsed, usage
