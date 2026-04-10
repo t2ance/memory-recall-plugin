@@ -316,8 +316,8 @@ def main():
 
     # If memory wasn't enabled, still compute dirs for output footer
     if not proj_mem_dir:
-        from discover import _compute_memory_dirs
-        proj_mem_dir, global_mem_dir = _compute_memory_dirs(cwd, DATA_DIR)
+        from utils import compute_memory_dirs
+        proj_mem_dir, global_mem_dir = compute_memory_dirs(cwd)
 
     # Extract conversation context (shared across dimensions)
     context = ""

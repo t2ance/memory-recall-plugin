@@ -12,7 +12,7 @@ import json
 import os
 
 from constants import BUILTIN_AGENTS, BUILTIN_SKILLS, DEFERRED_TOOLS
-from utils import parse_frontmatter as _parse_frontmatter, HOME
+from utils import compute_memory_dirs, parse_frontmatter as _parse_frontmatter, HOME
 
 
 # -- Memory ------------------------------------------------------------------
@@ -20,11 +20,7 @@ from utils import parse_frontmatter as _parse_frontmatter, HOME
 
 def discover_memory(cwd):
     """Discover memory files from project and global memory directories."""
-    data_dir = os.environ.get(
-        "CLAUDE_PLUGIN_DATA",
-        os.path.join(HOME, ".claude/plugins/data/memory-recall-memory-recall"),
-    )
-    proj_mem_dir, global_mem_dir = _compute_memory_dirs(cwd, data_dir)
+    proj_mem_dir, global_mem_dir = compute_memory_dirs(cwd)
 
     entries = []
     for mem_dir in [proj_mem_dir, global_mem_dir]:
@@ -41,20 +37,6 @@ def discover_memory(cwd):
                 "id": path,
             })
     return entries, proj_mem_dir, global_mem_dir
-
-
-def _compute_memory_dirs(cwd, data_dir):
-    sanitized = cwd.replace("/", "-").lstrip("-")
-    proj_candidates = [
-        os.path.join(HOME, ".claude", "projects", f"-{sanitized}", "memory"),
-        os.path.join(HOME, ".claude", "projects", sanitized, "memory"),
-    ]
-    proj_mem_dir = next(
-        (p for p in proj_candidates if os.path.isdir(p)),
-        proj_candidates[0],
-    )
-    global_mem_dir = os.path.join(data_dir, "global-memory")
-    return proj_mem_dir, global_mem_dir
 
 
 # -- Skills -------------------------------------------------------------------

@@ -305,7 +305,10 @@ def main():
         write_log({"event": "memory_save", "status": "no_response",
                     "haiku_s": haiku_s, "elapsed_s": elapsed,
                     "usage": usage})
-        print(json.dumps({"systemMessage": f"Memory save: no response | {elapsed}s"}))
+        write_status("memory_save", "done", hook_input,
+                     summary="no response", elapsed_s=elapsed,
+                     cost_usd=usage.get("cost_usd", 0) if usage else 0,
+                     model=ms["model"])
         return
 
     actions = parsed.get("actions", [])

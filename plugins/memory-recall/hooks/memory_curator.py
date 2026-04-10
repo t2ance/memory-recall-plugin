@@ -37,7 +37,6 @@ from utils import (
 # ---------------------------------------------------------------------------
 
 STATE_FILE = os.path.join(DATA_DIR, "curator_state.json")
-DEFAULT_COOLDOWN_H = 4
 DRY_RUN = os.environ.get("CURATOR_DRY_RUN", "false") == "true"
 MAX_WAIT_FOR_SAVE_S = 30
 WAIT_POLL_INTERVAL_S = 2
