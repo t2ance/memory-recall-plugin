@@ -23,7 +23,7 @@ from utils import (
     load_plugin_config,
     parse_frontmatter,
     read_memory_files,
-    write_log,
+    write_log, write_status,
 )
 
 # ---------------------------------------------------------------------------
@@ -226,6 +226,7 @@ def _update_index(memory_dir, fname, name, desc, action):
 def main():
     t_start = time.time()
     hook_input = json.loads(sys.stdin.read())
+    write_status("auto_save", "running", hook_input)
     event = hook_input.get("hook_event_name", "")
 
     if event != "Stop":
@@ -305,6 +306,13 @@ def main():
         "elapsed_s": round(time.time() - t_start, 2),
     })
 
+    save_model = config.get("model", "haiku")
+    save_cost = usage.get("cost_usd", 0) if usage else 0
+    save_elapsed = round(time.time() - t_start, 2)
+    save_summary = ", ".join(f"{a['action']} {a['file']}" for a in executed) if executed else "nothing to save"
+    write_status("auto_save", "done", hook_input,
+                 summary=save_summary, elapsed_s=save_elapsed,
+                 cost_usd=save_cost, model=save_model)
     # User-visible summary
     elapsed = round(time.time() - t_start, 2)
     if executed:

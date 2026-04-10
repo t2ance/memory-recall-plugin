@@ -30,7 +30,7 @@ from utils import (
     extract_agent_prompt, extract_context,
     hook_main, maybe_go_async,
     load_plugin_config as load_config,
-    write_log,
+    write_log, write_status,
 )
 
 # ---------------------------------------------------------------------------
@@ -249,6 +249,7 @@ def main():
     t_start = time.time()
 
     hook_input = json.loads(sys.stdin.read())
+    write_status("recall", "running", hook_input)
     event = hook_input.get("hook_event_name", "UserPromptSubmit")
 
     config = load_config()
@@ -377,6 +378,10 @@ def main():
     if cost_str:
         parts.append(cost_str)
     output["systemMessage"] = " | ".join(parts)
+    recall_model = config.get("model", "haiku")
+    write_status("recall", "done", hook_input,
+                 summary=label, elapsed_s=t_elapsed,
+                 cost_usd=total_cost_usd, model=recall_model)
     print(json.dumps(output))
 
 

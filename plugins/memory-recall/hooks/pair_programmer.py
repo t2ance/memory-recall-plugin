@@ -24,7 +24,7 @@ from utils import (
     hook_main, maybe_go_async,
     load_plugin_config,
     parse_frontmatter,
-    write_log,
+    write_log, write_status,
 )
 
 # ---------------------------------------------------------------------------
@@ -294,6 +294,7 @@ def format_output(parsed):
 def main():
     t_start = time.time()
     hook_input = json.loads(sys.stdin.read())
+    write_status("pp", "running", hook_input)
 
     if hook_input.get("hook_event_name") != "PostToolUse":
         return
@@ -351,6 +352,12 @@ def main():
         parts.append(f"${cost:.3f}")
     output["systemMessage"] = " | ".join(parts)
 
+    pp_cost = (eval_usage.get("cost_usd", 0) if eval_usage else 0) + \
+              (recall_usage.get("cost_usd", 0) if recall_usage else 0)
+    pp_model = config.get("pp_model", "haiku")
+    write_status("pp", "done", hook_input,
+                 summary=f"{verdict}: {additional_context[:60] if additional_context else 'no feedback'}",
+                 elapsed_s=elapsed, cost_usd=pp_cost, model=pp_model)
     print(json.dumps(output))
 
 

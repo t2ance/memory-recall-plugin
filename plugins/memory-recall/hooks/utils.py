@@ -22,6 +22,7 @@ PLUGIN_ROOT = os.environ.get(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
 )
 SOCKET_PATH = os.path.join(DATA_DIR, "daemon.sock")
+STATUS_DIR = os.path.join(DATA_DIR, "status")
 
 
 # ---------------------------------------------------------------------------
@@ -43,6 +44,57 @@ def maybe_go_async(config_key, config):
     if config.get(config_key, False):
         print(json.dumps({"async": True}))
         sys.stdout.flush()
+
+
+def write_status(hook_name, state, hook_input, summary="", elapsed_s=0, cost_usd=0, model="", _cache={}):
+    """Write hook status to a JSON file for statusLine visibility.
+
+    Uses atomic write (tmp + rename) to prevent partial reads.
+    Tracks total_runs per session by reading the existing file first.
+    """
+    session_id = hook_input.get("session_id", "unknown")
+    agent_id = hook_input.get("agent_id", "")
+    agent_type = hook_input.get("agent_type", "")
+
+    session_dir = os.path.join(STATUS_DIR, session_id)
+    os.makedirs(session_dir, exist_ok=True)
+
+    fname = f"{hook_name}_{agent_id}.json" if agent_id else f"{hook_name}.json"
+    path = os.path.join(session_dir, fname)
+
+    total_runs = 0
+    if os.path.exists(path):
+        try:
+            with open(path) as f:
+                total_runs = json.loads(f.read()).get("total_runs", 0)
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    if state == "running":
+        total_runs += 1
+
+    now_hms = time.strftime("%H:%M:%S")
+    data = {
+        "hook": hook_name,
+        "state": state,
+        "agent_id": agent_id,
+        "agent_type": agent_type,
+        "summary": summary,
+        "elapsed_s": round(elapsed_s, 2),
+        "cost_usd": round(cost_usd, 4),
+        "model": model,
+        "started_at": _cache.get(f"{session_id}:{fname}:started_at", now_hms),
+        "finished_at": now_hms if state != "running" else "",
+        "total_runs": total_runs,
+    }
+
+    if state == "running":
+        _cache[f"{session_id}:{fname}:started_at"] = now_hms
+
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w") as f:
+        f.write(json.dumps(data))
+    os.rename(tmp_path, path)
 
 
 def hook_main(fn):
