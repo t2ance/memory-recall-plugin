@@ -171,7 +171,7 @@ def execute_actions(actions, memory_dir):
             with open(path, "w") as f:
                 f.write(f"---\nname: {name}\ndescription: {desc}\ntype: {mtype}\n---\n\n{content}\n")
             _update_index(memory_dir, fname, name, desc, "add")
-            executed.append({"action": "ADD", "file": fname, "reason": reason})
+            executed.append({"action": "add", "file": fname, "reason": reason})
 
         elif act == "UPDATE":
             target = a.get("target_file", "")
@@ -189,7 +189,7 @@ def execute_actions(actions, memory_dir):
             with open(path, "w") as f:
                 f.write(f"---\nname: {name}\ndescription: {desc}\ntype: {mtype}\n---\n\n{content}\n")
             _update_index(memory_dir, target, name, desc, "update")
-            executed.append({"action": "UPDATE", "file": target, "reason": reason})
+            executed.append({"action": "update", "file": target, "reason": reason})
 
         elif act == "DELETE":
             target = a.get("target_file", "")
@@ -199,7 +199,7 @@ def execute_actions(actions, memory_dir):
             reason = a.get("reason", "")
             os.remove(path)
             _update_index(memory_dir, target, "", "", "delete")
-            executed.append({"action": "DELETE", "file": target, "reason": reason})
+            executed.append({"action": "delete", "file": target, "reason": reason})
 
     return executed
 

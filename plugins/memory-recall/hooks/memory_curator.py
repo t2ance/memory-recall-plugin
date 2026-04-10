@@ -535,7 +535,6 @@ def main():
 
     cooldown_h = config.get("curator_cooldown_h", DEFAULT_COOLDOWN_H)
     if not check_cooldown(cooldown_h):
-        write_status("curator", "done", hook_input, skipped=True)
         return
 
     cwd = hook_input.get("cwd", "")

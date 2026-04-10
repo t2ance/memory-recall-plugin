@@ -377,7 +377,7 @@ def main():
         }
     }
     label = "; ".join(summary_parts) if summary_parts else "nothing relevant"
-    recall_model = config.get("model", "haiku")
+    recall_model = config.get("model", "haiku") if total_cost_usd > 0 else ""
     write_status("recall", "done", hook_input,
                  summary=label[:120], elapsed_s=t_elapsed,
                  cost_usd=total_cost_usd, model=recall_model)

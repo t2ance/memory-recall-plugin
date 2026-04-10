@@ -20,25 +20,25 @@
       "type": "string",
       "title": "Memory Recall Backend",
       "description": "'off', 'reminder' (list paths), 'agentic' (Haiku selects files), or 'embedding' (local RAG)",
-      "default": "reminder"
+      "default": "agentic"
     },
     "skills": {
       "type": "string",
       "title": "Skills Recall Backend",
       "description": "'off', 'reminder' (list all), 'agentic' (Haiku selects), or 'embedding' (vector match)",
-      "default": "off"
+      "default": "agentic"
     },
     "tools": {
       "type": "string",
       "title": "Tools Recall Backend",
       "description": "'off', 'reminder' (list all), 'agentic' (Haiku selects), or 'embedding' (vector match). Covers MCP servers + deferred tools.",
-      "default": "off"
+      "default": "agentic"
     },
     "agents": {
       "type": "string",
       "title": "Agent Types Recall Backend",
       "description": "'off', 'reminder' (list all), 'agentic' (Haiku selects), or 'embedding' (vector match)",
-      "default": "off"
+      "default": "agentic"
     },
     "memory_input": {
       "type": "string",
