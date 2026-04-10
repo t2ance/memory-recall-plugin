@@ -372,12 +372,7 @@ def main():
             "additionalContext": additional_context,
         }
     }
-    cost_str = f"${total_cost_usd:.3f}" if total_cost_usd else ""
     label = f"Recalled: {'; '.join(summary_parts)}" if summary_parts else "Recalled: nothing relevant"
-    parts = [label, f"{t_elapsed}s"]
-    if cost_str:
-        parts.append(cost_str)
-    output["systemMessage"] = " | ".join(parts)
     recall_model = config.get("model", "haiku")
     write_status("recall", "done", hook_input,
                  summary=label, elapsed_s=t_elapsed,

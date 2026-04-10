@@ -313,13 +313,6 @@ def main():
     write_status("auto_save", "done", hook_input,
                  summary=save_summary, elapsed_s=save_elapsed,
                  cost_usd=save_cost, model=save_model)
-    # User-visible summary
-    elapsed = round(time.time() - t_start, 2)
-    if executed:
-        parts = [f"{a['action']} {a['file']}" for a in executed]
-        print(json.dumps({"systemMessage": f"Memory save: {', '.join(parts)} | {elapsed}s"}))
-    else:
-        print(json.dumps({"systemMessage": f"Memory save: nothing to save | {elapsed}s"}))
 
 
 if __name__ == "__main__":

@@ -344,13 +344,7 @@ def main():
             "additionalContext": additional_context,
         }
 
-    cost = (eval_usage.get("cost_usd", 0) if eval_usage else 0) + \
-           (recall_usage.get("cost_usd", 0) if recall_usage else 0)
     verdict = parsed.get("overall", "skip") if parsed else "skip"
-    parts = [f"PP: {verdict}", f"{elapsed}s"]
-    if cost:
-        parts.append(f"${cost:.3f}")
-    output["systemMessage"] = " | ".join(parts)
 
     pp_cost = (eval_usage.get("cost_usd", 0) if eval_usage else 0) + \
               (recall_usage.get("cost_usd", 0) if recall_usage else 0)
