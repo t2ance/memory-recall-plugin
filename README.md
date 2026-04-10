@@ -4,7 +4,7 @@ Multi-dimension context recall for Claude Code. Automatically surfaces relevant 
 
 ## Features
 
-- **4 hooks**: recall (UserPromptSubmit/SubagentStart), memory save (Stop), pair programmer (PostToolUse)
+- **4 hooks**: recall (UserPromptSubmit/SubagentStart), memory save (Stop), pair programmer (PostToolUse), curator (Stop)
 - **4 recall dimensions**: memory files, skills, tools (MCP + deferred), agent types
 - **3 backends per dimension**: reminder (zero-cost), agentic (Haiku selection), embedding (local RAG)
 - **Pair programmer**: evaluates agent actions against user preferences, past experience, strategic direction
@@ -44,7 +44,7 @@ Each dimension accepts: `"off"`, `"reminder"`, `"agentic"`, or `"embedding"`.
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `memory` / `skills` / `tools` / `agents` | Backend per dimension: `off`, `reminder`, `agentic`, `embedding` | `reminder` (memory), `off` (others) |
+| `memory` / `skills` / `tools` / `agents` | Backend per dimension: `off`, `reminder`, `agentic`, `embedding` | `agentic` |
 | `agentic_mode` | `parallel` (one call/dim) or `merged` (single call) | `parallel` |
 | `{dim}_input` | What selector sees: `title_desc` or `full` | `title_desc` |
 | `{dim}_output` | What gets injected: `title_desc` or `full` | `full` (memory), `title_desc` (others) |
@@ -52,7 +52,7 @@ Each dimension accepts: `"off"`, `"reminder"`, `"agentic"`, or `"embedding"`.
 | `context_messages` | Recent messages for search context | `5` |
 | `context_max_chars` | Max chars of conversation context | `2000` |
 | `max_content_chars` | Global cap on total injected content | `9000` |
-| `recall_effort` | Effort for recall calls: `low` or `""` | `""` |
+| `recall_effort` | Effort for recall calls: `low` or `""` | `low` |
 
 **Embedding options:**
 
@@ -68,26 +68,26 @@ Each dimension accepts: `"off"`, `"reminder"`, `"agentic"`, or `"embedding"`.
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `auto_save_enabled` | Enable auto-save after each turn | `true` |
-| `auto_save_targets` | `native` (project), `global`, or `both` | `native` |
-| `auto_save_context_turns` | Conversation turns for analysis | `3` |
-| `auto_save_effort` | Effort level for save calls | `""` |
+| `memory_save_enabled` | Enable auto-save after each turn | `true` |
+| `memory_save_targets` | `native` (project), `global`, or `both` | `native` |
+| `memory_save_context_turns` | Conversation turns for analysis | `3` |
+| `memory_save_effort` | Effort level for save calls | `""` |
 
 **Pair programmer options:**
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `pp_enabled` | Enable pair programmer | `false` |
-| `pp_model` | Model for evaluation | `haiku` |
-| `pp_sample_rate` | Probability of evaluating each tool call (0-1) | `1.0` |
-| `pp_cooldown_s` | Min seconds between evaluations | `0` |
-| `pp_context_messages` | Recent messages for trajectory | `5` |
-| `pp_context_max_chars` | Max conversation context chars | `3000` |
-| `pp_effort` | Effort level | `""` |
-| `pp_max_tool_input_chars` | Max tool input chars in trajectory | `2000` |
-| `pp_max_tool_output_chars` | Max tool output chars in trajectory | `1000` |
-| `pp_max_recall_files` | Max memory files to recall | `5` |
-| `pp_max_memory_file_chars` | Max chars per recalled memory file | `2000` |
+| `pair_programmer_enabled` | Enable pair programmer | `true` |
+| `pair_programmer_model` | Model for evaluation | `haiku` |
+| `pair_programmer_sample_rate` | Probability of evaluating each tool call (0-1) | `1.0` |
+| `pair_programmer_cooldown_s` | Min seconds between evaluations | `120` |
+| `pair_programmer_context_messages` | Recent messages for trajectory | `5` |
+| `pair_programmer_context_max_chars` | Max conversation context chars | `3000` |
+| `pair_programmer_effort` | Effort level | `""` |
+| `pair_programmer_max_tool_input_chars` | Max tool input chars in trajectory | `2000` |
+| `pair_programmer_max_tool_output_chars` | Max tool output chars in trajectory | `1000` |
+| `pair_programmer_max_recall_files` | Max memory files to recall | `5` |
+| `pair_programmer_max_memory_file_chars` | Max chars per recalled memory file | `2000` |
 
 **Async options:**
 
@@ -95,7 +95,11 @@ Each dimension accepts: `"off"`, `"reminder"`, `"agentic"`, or `"embedding"`.
 |--------|-------------|---------|
 | `recall_async` | Run recall hook asynchronously | `false` |
 | `memory_save_async` | Run memory save hook asynchronously | `true` |
-| `pp_async` | Run pair programmer hook asynchronously | `true` |
+| `pair_programmer_async` | Run pair programmer hook asynchronously | `true` |
+| `curator_enabled` | Enable periodic memory consolidation | `true` |
+| `curator_cooldown_h` | Min hours between curator runs | `4` |
+| `curator_effort` | Effort level for curator calls | `""` |
+| `curator_async` | Run curator hook asynchronously | `true` |
 
 ## How It Works
 
@@ -117,7 +121,7 @@ After each assistant turn, the hook:
 2. Calls Haiku to decide what knowledge to persist (ADD/UPDATE/DELETE/NOOP)
 3. Writes memory files and updates MEMORY.md index
 
-Config: `auto_save_enabled` (default true), `auto_save_targets` (native/global/both), `auto_save_context_turns` (default 3), `auto_save_effort`.
+Config: `memory_save_enabled` (default true), `memory_save_targets` (native/global/both), `memory_save_context_turns` (default 3), `memory_save_effort`.
 
 ### Pair Programmer (PostToolUse)
 
@@ -128,7 +132,7 @@ After action tools (Edit/Write/Bash/NotebookEdit), the hook:
 3. Evaluates across 3 dimensions (preference alignment, experience recall, strategic oversight)
 4. Injects soft suggestions via `additionalContext`
 
-Default off. Enable with `pp_enabled: true`. See config table below for all `pp_*` options.
+Enabled by default. Evaluates every action tool call, with 120s cooldown between evaluations. Outputs a TL;DR summary for the statusline and full multi-dimensional feedback as `additionalContext` for the agent.
 
 ### Async Support
 
@@ -204,9 +208,10 @@ The embedding daemon starts automatically on first use. Configure model and devi
 
 ```
 hooks/
-  memory_recall.py      # Recall hook: parallel dispatch + merge + inject
-  auto_save.py          # Memory save hook: Haiku CRUD on conversation knowledge
-  pair_programmer.py    # Pair programmer hook: 3-dimension evaluation of agent actions
+  recall.py             # Recall hook: parallel dispatch + merge + inject
+  memory_save.py        # Memory save hook: Haiku CRUD on conversation knowledge
+  pair_programmer.py    # Pair programmer hook: 3-dimension evaluation + TL;DR
+  memory_curator.py     # Curator hook: periodic memory consolidation (automated dream)
   discover.py           # Resource discovery (file scan + hardcoded fallback)
   backends.py           # 3 recall backend implementations
   utils.py              # Shared: Agent SDK wrapper, config, logging, async mode

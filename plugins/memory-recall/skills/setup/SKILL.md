@@ -4,7 +4,7 @@ description: "Interactive setup for memory-recall plugin. Configure recall dimen
 user_invocable: true
 ---
 
-# Memory-Recall Plugin Setup (v3.0)
+# Memory-Recall Plugin Setup (v3.2.0)
 
 Guide the user through configuring the memory-recall plugin. 4 dimensions x 3 backends.
 

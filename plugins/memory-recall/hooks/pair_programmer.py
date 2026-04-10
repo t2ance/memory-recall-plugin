@@ -53,7 +53,8 @@ Rules:
 - Only flag genuinely useful observations. If nothing notable, return all null.
 - Be specific and actionable: "Search web for this error before patching" not "Be careful."
 - 1-2 sentences per dimension max.
-- You suggest, the agent decides. Never force or block."""
+- You suggest, the agent decides. Never force or block.
+- Always provide a tldr: one actionable sentence under 80 chars for the user dashboard. If nothing notable, use "ok"."""
 
 EVAL_SCHEMA = {
     "type": "json_schema",
@@ -103,8 +104,12 @@ EVAL_SCHEMA = {
                 "type": "string",
                 "enum": ["ok", "suggest"],
             },
+            "tldr": {
+                "type": "string",
+                "description": "One-sentence actionable summary for the user dashboard. Under 80 chars.",
+            },
         },
-        "required": ["preference", "experience", "strategy", "overall"],
+        "required": ["preference", "experience", "strategy", "overall", "tldr"],
     },
 }
 
@@ -303,21 +308,7 @@ def format_status_summary(parsed):
     """Format a single-line summary for statusline (visible to user)."""
     if not parsed or parsed.get("overall") == "ok":
         return "ok"
-
-    # Collect non-null suggestions into a compact single line
-    parts = []
-    for key in ("preference", "experience", "strategy"):
-        dim = parsed.get(key)
-        if dim is None:
-            continue
-        sug = dim.get("suggestion", "")
-        if sug:
-            parts.append(sug)
-
-    if not parts:
-        return "ok"
-
-    return " | ".join(parts)
+    return parsed.get("tldr", "ok")
 
 
 # ---------------------------------------------------------------------------
