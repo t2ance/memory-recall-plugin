@@ -6,6 +6,8 @@ user-invocable: true
 
 # Dream: Memory Consolidation
 
+An automated **memory_curator** runs every 4h on the Stop hook, performing aggressive MERGE/DELETE consolidation. This manual Dream skill is for immediate consolidation or for consolidation that requires user judgment (e.g., moving entries between project and global memory, tidying CLAUDE.md).
+
 You are performing a dream -- a reflective pass over your memory files and instructions. Synthesize what you've learned recently into durable, well-organized memories so that future sessions can orient quickly.
 
 You manage three sources:
@@ -66,6 +68,22 @@ Also check the reverse: if global memory contains entries that are actually hard
 **Never edit CLAUDE.md without asking first.**
 
 ## Phase 5 -- Prune and index
+
+### Delete without hesitation
+
+- Fixed bugs, error resolutions, or debugging sessions -- the fix lives in code/git
+- Completed plans or task lists -- the result lives in code
+- Implementation details derivable from reading the code (file paths, function names, config formats)
+- UI/display formatting decisions -- cosmetic, in the code
+- One-time investigation notes -- ephemeral, not reusable
+- Stale project status updates superseded by newer ones
+
+### Merge aggressively
+
+- If a topic has 3+ files, consolidate to 1-2 files max
+- Synthesize the essential insight, don't concatenate
+
+### Update MEMORY.md
 
 Update `MEMORY.md` in **both** memory directories. Each should stay under 200 lines and ~25KB. Each entry should be one line under ~150 characters: `- [Title](file.md) -- one-line hook`.
 
