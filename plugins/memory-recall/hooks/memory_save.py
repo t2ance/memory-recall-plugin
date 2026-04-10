@@ -51,6 +51,23 @@ For each candidate:
 3. "Already covered by an existing memory?" -- YES & unchanged -> skip; needs update -> UPDATE
 4. All passed -> ADD
 
+## NEVER Save These (even if they seem useful)
+
+- Bug fixes, error resolutions, or debugging sessions -- the fix lives in code/git
+- Completed plans or task lists -- the result lives in code
+- Implementation details (file paths, function names, config formats) -- derivable from reading the code
+- UI/display formatting decisions -- cosmetic, in the code
+- One-time investigation notes -- ephemeral, not reusable
+- Incremental iterations of the same design -- only the final decision matters
+- Anything that restates what CLAUDE.md already says
+
+## Dedup Awareness
+
+You are given a list of existing memories below. Before proposing ADD:
+- If an existing memory covers the same topic, propose UPDATE instead of ADD
+- If the existing memory is already adequate, propose NOOP
+- Never create a new file when an update to an existing file would suffice
+
 ## Memory Types
 
 - user: role, preferences, expertise, communication style
