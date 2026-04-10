@@ -249,7 +249,7 @@ def main():
     t_start = time.time()
 
     hook_input = json.loads(sys.stdin.read())
-    write_status("recall", "running", hook_input)
+    write_status("recall", "running", hook_input, timeout_s=30)
     event = hook_input.get("hook_event_name", "UserPromptSubmit")
 
     config = load_config()

@@ -46,7 +46,7 @@ def maybe_go_async(config_key, config):
         sys.stdout.flush()
 
 
-def write_status(hook_name, state, hook_input, summary="", elapsed_s=0, cost_usd=0, model="", _cache={}):
+def write_status(hook_name, state, hook_input, summary="", elapsed_s=0, cost_usd=0, model="", timeout_s=60, _cache={}):
     """Write hook status to a JSON file for statusLine visibility.
 
     Uses atomic write (tmp + rename) to prevent partial reads.
@@ -86,6 +86,7 @@ def write_status(hook_name, state, hook_input, summary="", elapsed_s=0, cost_usd
         "started_at": _cache.get(f"{session_id}:{fname}:started_at", now_hms),
         "finished_at": now_hms if state != "running" else "",
         "total_runs": total_runs,
+        "timeout_s": timeout_s,
     }
 
     if state == "running":

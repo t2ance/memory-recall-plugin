@@ -226,7 +226,7 @@ def _update_index(memory_dir, fname, name, desc, action):
 def main():
     t_start = time.time()
     hook_input = json.loads(sys.stdin.read())
-    write_status("auto_save", "running", hook_input)
+    write_status("auto_save", "running", hook_input, timeout_s=120)
     event = hook_input.get("hook_event_name", "")
 
     if event != "Stop":
