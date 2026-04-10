@@ -294,18 +294,18 @@ def format_output(parsed):
 def main():
     t_start = time.time()
     hook_input = json.loads(sys.stdin.read())
-    write_status("pp", "running", hook_input, timeout_s=30)
-
     if hook_input.get("hook_event_name") != "PostToolUse":
-        write_status("pp", "done", hook_input, summary="skipped: not PostToolUse")
+        write_status("pp", "done", hook_input, skipped=True)
         return
 
     config = load_plugin_config()
     maybe_go_async("pp_async", config)
 
     if not should_evaluate(hook_input, config):
-        write_status("pp", "done", hook_input, summary="skipped: cooldown/sampling")
+        write_status("pp", "done", hook_input, skipped=True)
         return
+
+    write_status("pp", "running", hook_input, timeout_s=30)
 
     cwd = hook_input.get("cwd", "")
     if not cwd:

@@ -226,21 +226,22 @@ def _update_index(memory_dir, fname, name, desc, action):
 def main():
     t_start = time.time()
     hook_input = json.loads(sys.stdin.read())
-    write_status("auto_save", "running", hook_input, timeout_s=120)
     event = hook_input.get("hook_event_name", "")
 
     if event != "Stop":
-        write_status("auto_save", "done", hook_input, summary="skipped: not Stop")
+        write_status("auto_save", "done", hook_input, skipped=True)
         return
     if hook_input.get("stop_hook_active", False):
-        write_status("auto_save", "done", hook_input, summary="skipped: stop_hook_active")
+        write_status("auto_save", "done", hook_input, skipped=True)
         return
 
     config = load_plugin_config()
     maybe_go_async("memory_save_async", config)
     if not config["auto_save_enabled"]:
-        write_status("auto_save", "done", hook_input, summary="skipped: disabled")
+        write_status("auto_save", "done", hook_input, skipped=True)
         return
+
+    write_status("auto_save", "running", hook_input, timeout_s=120)
 
     cwd = hook_input.get("cwd", "")
     last_msg = hook_input.get("last_assistant_message", "")

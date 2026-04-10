@@ -46,11 +46,15 @@ def maybe_go_async(config_key, config):
         sys.stdout.flush()
 
 
-def write_status(hook_name, state, hook_input, summary="", elapsed_s=0, cost_usd=0, model="", timeout_s=60, _cache={}):
+def write_status(hook_name, state, hook_input, summary="", elapsed_s=0, cost_usd=0, model="", timeout_s=60, skipped=False, _cache={}):
     """Write hook status to a JSON file for statusLine visibility.
 
     Uses atomic write (tmp + rename) to prevent partial reads.
     Tracks total_runs per session by reading the existing file first.
+
+    When skipped=True, preserves the previous state/summary and increments
+    skipped_count instead of overwriting. This prevents cooldown skips from
+    hiding the last real execution result.
     """
     session_id = hook_input.get("session_id", "unknown")
     agent_id = hook_input.get("agent_id", "")
@@ -62,35 +66,43 @@ def write_status(hook_name, state, hook_input, summary="", elapsed_s=0, cost_usd
     fname = f"{hook_name}_{agent_id}.json" if agent_id else f"{hook_name}.json"
     path = os.path.join(session_dir, fname)
 
-    total_runs = 0
+    prev = {}
     if os.path.exists(path):
         try:
             with open(path) as f:
-                total_runs = json.loads(f.read()).get("total_runs", 0)
+                prev = json.loads(f.read())
         except (json.JSONDecodeError, OSError):
             pass
 
-    if state == "running":
-        total_runs += 1
+    total_runs = prev.get("total_runs", 0)
 
-    now_hms = time.strftime("%H:%M:%S")
-    data = {
-        "hook": hook_name,
-        "state": state,
-        "agent_id": agent_id,
-        "agent_type": agent_type,
-        "summary": summary,
-        "elapsed_s": round(elapsed_s, 2),
-        "cost_usd": round(cost_usd, 4),
-        "model": model,
-        "started_at": _cache.get(f"{session_id}:{fname}:started_at", now_hms),
-        "finished_at": now_hms if state != "running" else "",
-        "total_runs": total_runs,
-        "timeout_s": timeout_s,
-    }
+    if skipped:
+        # Preserve previous result, just bump skipped_count
+        prev["skipped_count"] = prev.get("skipped_count", 0) + 1
+        data = prev
+    else:
+        if state == "running":
+            total_runs += 1
 
-    if state == "running":
-        _cache[f"{session_id}:{fname}:started_at"] = now_hms
+        now_hms = time.strftime("%H:%M:%S")
+        data = {
+            "hook": hook_name,
+            "state": state,
+            "agent_id": agent_id,
+            "agent_type": agent_type,
+            "summary": summary,
+            "elapsed_s": round(elapsed_s, 2),
+            "cost_usd": round(cost_usd, 4),
+            "model": model,
+            "started_at": _cache.get(f"{session_id}:{fname}:started_at", now_hms),
+            "finished_at": now_hms if state != "running" else "",
+            "total_runs": total_runs,
+            "timeout_s": timeout_s,
+            "skipped_count": 0,
+        }
+
+        if state == "running":
+            _cache[f"{session_id}:{fname}:started_at"] = now_hms
 
     tmp_path = path + ".tmp"
     with open(tmp_path, "w") as f:
