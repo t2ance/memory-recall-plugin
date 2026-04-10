@@ -26,17 +26,17 @@ Then configure via `/setup` or manually in `~/.claude/settings.json`:
   "pluginConfigs": {
     "memory-recall@memory-recall": {
       "options": {
-        "memory": "agentic",
-        "skills": "agentic",
-        "tools": "agentic",
-        "agents": "agentic"
+        "recall_memory_backend": "agentic",
+        "recall_skills_backend": "agentic",
+        "recall_tools_backend": "agentic",
+        "recall_agents_backend": "agentic"
       }
     }
   }
 }
 ```
 
-Each dimension accepts: `"off"`, `"reminder"`, `"agentic"`, or `"embedding"`.
+Each dimension backend accepts: `"off"`, `"reminder"`, `"agentic"`, or `"embedding"`.
 
 ### Configuration Reference
 
@@ -44,34 +44,35 @@ Each dimension accepts: `"off"`, `"reminder"`, `"agentic"`, or `"embedding"`.
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `memory` / `skills` / `tools` / `agents` | Backend per dimension: `off`, `reminder`, `agentic`, `embedding` | `agentic` |
-| `agentic_mode` | `parallel` (one call/dim) or `merged` (single call) | `parallel` |
-| `{dim}_input` | What selector sees: `title_desc` or `full` | `title_desc` |
-| `{dim}_output` | What gets injected: `title_desc` or `full` | `full` (memory), `title_desc` (others) |
-| `model` | Agentic model: `haiku` / `sonnet` / `opus` | `haiku` |
-| `context_messages` | Recent messages for search context | `5` |
-| `context_max_chars` | Max chars of conversation context | `2000` |
-| `max_content_chars` | Global cap on total injected content | `9000` |
+| `recall_enabled` | Enable recall on UserPromptSubmit/SubagentStart | `true` |
+| `recall_model` | Model for agentic backend: `haiku`/`sonnet`/`opus` | `haiku` |
 | `recall_effort` | Effort for recall calls: `low` or `""` | `low` |
+| `recall_async` | Run recall hook asynchronously | `false` |
+| `recall_agentic_mode` | `parallel` (one call/dim) or `merged` (single call) | `parallel` |
+| `recall_context_messages` | Recent messages for search context | `5` |
+| `recall_context_max_chars` | Max chars of conversation context | `2000` |
+| `recall_max_content_chars` | Global cap on total injected content | `9000` |
+| `recall_{dim}_backend` | Backend per dimension: `off`, `reminder`, `agentic`, `embedding` | `agentic` |
+| `recall_{dim}_input` | What selector sees: `title_desc` or `full` | `title_desc` |
+| `recall_{dim}_output` | What gets injected: `title_desc` or `full` | `full` (memory), `title_desc` (others) |
+| `recall_embedding_model` | HuggingFace model name | `intfloat/multilingual-e5-small` |
+| `recall_embedding_python` | Python path with sentence-transformers | `~/miniconda3/envs/memory-recall/bin/python` |
+| `recall_embedding_threshold` | Cosine similarity threshold | `0.85` |
+| `recall_embedding_top_k` | Max results per dimension | `3` |
+| `recall_embedding_device` | `cpu` or `cuda` | `cpu` |
 
-**Embedding options:**
-
-| Option | Description | Default |
-|--------|-------------|---------|
-| `embedding_model` | HuggingFace model name | `intfloat/multilingual-e5-small` |
-| `embedding_python` | Python path with sentence-transformers | `~/miniconda3/envs/memory-recall/bin/python` |
-| `embedding_threshold` | Cosine similarity threshold | `0.85` |
-| `embedding_top_k` | Max results per dimension | `3` |
-| `embedding_device` | `cpu` or `cuda` | `cpu` |
+Where `{dim}` is one of: `memory`, `skills`, `tools`, `agents`.
 
 **Memory save options:**
 
 | Option | Description | Default |
 |--------|-------------|---------|
 | `memory_save_enabled` | Enable auto-save after each turn | `true` |
+| `memory_save_model` | Model for save analysis | `haiku` |
+| `memory_save_effort` | Effort level for save calls | `""` |
+| `memory_save_async` | Run save hook asynchronously | `true` |
 | `memory_save_targets` | `native` (project), `global`, or `both` | `native` |
 | `memory_save_context_turns` | Conversation turns for analysis | `3` |
-| `memory_save_effort` | Effort level for save calls | `""` |
 
 **Pair programmer options:**
 
@@ -79,27 +80,26 @@ Each dimension accepts: `"off"`, `"reminder"`, `"agentic"`, or `"embedding"`.
 |--------|-------------|---------|
 | `pair_programmer_enabled` | Enable pair programmer | `true` |
 | `pair_programmer_model` | Model for evaluation | `haiku` |
+| `pair_programmer_effort` | Effort level | `""` |
+| `pair_programmer_async` | Run pair programmer asynchronously | `true` |
 | `pair_programmer_sample_rate` | Probability of evaluating each tool call (0-1) | `1.0` |
 | `pair_programmer_cooldown_s` | Min seconds between evaluations | `120` |
 | `pair_programmer_context_messages` | Recent messages for trajectory | `5` |
 | `pair_programmer_context_max_chars` | Max conversation context chars | `3000` |
-| `pair_programmer_effort` | Effort level | `""` |
 | `pair_programmer_max_tool_input_chars` | Max tool input chars in trajectory | `2000` |
 | `pair_programmer_max_tool_output_chars` | Max tool output chars in trajectory | `1000` |
 | `pair_programmer_max_recall_files` | Max memory files to recall | `5` |
 | `pair_programmer_max_memory_file_chars` | Max chars per recalled memory file | `2000` |
 
-**Async options:**
+**Curator options:**
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `recall_async` | Run recall hook asynchronously | `false` |
-| `memory_save_async` | Run memory save hook asynchronously | `true` |
-| `pair_programmer_async` | Run pair programmer hook asynchronously | `true` |
 | `curator_enabled` | Enable periodic memory consolidation | `true` |
-| `curator_cooldown_h` | Min hours between curator runs | `1` |
+| `curator_model` | Model for curator analysis | `haiku` |
 | `curator_effort` | Effort level for curator calls | `""` |
-| `curator_async` | Run curator hook asynchronously | `true` |
+| `curator_async` | Run curator asynchronously | `true` |
+| `curator_cooldown_h` | Min hours between curator runs | `1` |
 
 ## How It Works
 
@@ -121,7 +121,7 @@ After each assistant turn, the hook:
 2. Calls Haiku to decide what knowledge to persist (ADD/UPDATE/DELETE/NOOP)
 3. Writes memory files and updates MEMORY.md index
 
-Config: `memory_save_enabled` (default true), `memory_save_targets` (native/global/both), `memory_save_context_turns` (default 3), `memory_save_effort`.
+Config: `memory_save_enabled` (default true), `memory_save_model` (default haiku), `memory_save_targets` (native/global/both), `memory_save_context_turns` (default 3).
 
 ### Pair Programmer (PostToolUse)
 
@@ -142,7 +142,8 @@ Each hook can run synchronously (blocking) or asynchronously (non-blocking):
 |--------|---------|--------|
 | `recall_async` | `false` | Recall must usually be sync (context needed before agent responds) |
 | `memory_save_async` | `true` | Save runs in background after turn completes |
-| `pp_async` | `true` | Pair programmer feedback arrives at next tool call |
+| `pair_programmer_async` | `true` | Pair programmer feedback arrives at next tool call |
+| `curator_async` | `true` | Curator runs in background after session |
 
 ### Backends
 
