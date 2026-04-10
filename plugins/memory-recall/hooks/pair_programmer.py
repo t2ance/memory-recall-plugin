@@ -127,12 +127,16 @@ def write_state(state):
 
 
 def check_cooldown(config):
+    """Returns (passed, remaining_seconds)."""
     cooldown = config.get("pair_programmer_cooldown_s", 0)
     if cooldown <= 0:
-        return True
+        return True, 0
     state = read_state()
     last_eval = state.get("last_eval_ts", 0)
-    return (time.time() - last_eval) >= cooldown
+    elapsed = time.time() - last_eval
+    if elapsed >= cooldown:
+        return True, 0
+    return False, int(cooldown - elapsed)
 
 
 # ---------------------------------------------------------------------------
@@ -140,23 +144,30 @@ def check_cooldown(config):
 # ---------------------------------------------------------------------------
 
 def should_evaluate(hook_input, config):
-    if not config.get("pair_programmer_enabled", False):
-        return False
+    """Returns (should_eval, skip_reason_or_None).
 
-    # Skip sub-agent tool calls
+    skip_reason=None  -> silent skip (disabled/sub-agent): no status line.
+    skip_reason=str   -> visible skip (cooldown/sampling): show reason in status.
+    """
+    if not config.get("pair_programmer_enabled", True):
+        return False, None
+
+    # Sub-agent tool calls are irrelevant to the user
     if hook_input.get("agent_id"):
-        return False
+        return False, None
 
     # Sampling
     sample_rate = config.get("pair_programmer_sample_rate", 1.0)
     if sample_rate < 1.0 and random.random() > sample_rate:
-        return False
+        return False, "sampled out"
 
-    # Cooldown
-    if not check_cooldown(config):
-        return False
+    # Cooldown — store absolute end timestamp for dynamic countdown in statusline
+    passed, remaining = check_cooldown(config)
+    if not passed:
+        cooldown_until = int(time.time()) + remaining
+        return False, f"cooldown:{cooldown_until}"
 
-    return True
+    return True, None
 
 
 # ---------------------------------------------------------------------------
@@ -259,7 +270,7 @@ async def evaluate(trajectory, memories_text, config):
 # ---------------------------------------------------------------------------
 
 def format_output(parsed):
-    """Format evaluation results into additionalContext string."""
+    """Format evaluation results into additionalContext string (multi-line, for agent)."""
     if not parsed:
         return None
 
@@ -279,12 +290,34 @@ def format_output(parsed):
             continue
         obs = dim.get("observation", "")
         sug = dim.get("suggestion", "")
-        sections.append(f"[{label}] {obs} -- {sug}")
+        if obs or sug:
+            sections.append(f"[{label}] {obs} -- {sug}")
 
     if not sections:
         return None
 
     return "Pair programmer feedback:\n" + "\n".join(sections)
+
+
+def format_status_summary(parsed):
+    """Format a single-line summary for statusline (visible to user)."""
+    if not parsed or parsed.get("overall") == "ok":
+        return "ok"
+
+    # Collect non-null suggestions into a compact single line
+    parts = []
+    for key in ("preference", "experience", "strategy"):
+        dim = parsed.get(key)
+        if dim is None:
+            continue
+        sug = dim.get("suggestion", "")
+        if sug:
+            parts.append(sug)
+
+    if not parts:
+        return "ok"
+
+    return " | ".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -295,14 +328,21 @@ def main():
     t_start = time.time()
     hook_input = json.loads(sys.stdin.read())
     if hook_input.get("hook_event_name") != "PostToolUse":
-        write_status("pair_programmer", "done", hook_input, skipped=True)
         return
 
     config = load_plugin_config()
     maybe_go_async("pair_programmer_async", config)
 
-    if not should_evaluate(hook_input, config):
-        write_status("pair_programmer", "done", hook_input, skipped=True)
+    should_eval, skip_reason = should_evaluate(hook_input, config)
+    if not should_eval:
+        if skip_reason is not None:
+            if skip_reason.startswith("cooldown:"):
+                # Preserve last evaluation result, add cooldown marker
+                cooldown_until = int(skip_reason.split(":")[1])
+                write_status("pair_programmer", "done", hook_input,
+                             skipped=True, cooldown_until=cooldown_until)
+            else:
+                write_status("pair_programmer", "done", hook_input, summary=skip_reason)
         return
 
     write_status("pair_programmer", "running", hook_input, timeout_s=30)
@@ -348,12 +388,13 @@ def main():
         }
 
     verdict = parsed.get("overall", "skip") if parsed else "skip"
+    status_summary = format_status_summary(parsed)
 
     pair_programmer_cost = (eval_usage.get("cost_usd", 0) if eval_usage else 0) + \
               (recall_usage.get("cost_usd", 0) if recall_usage else 0)
     pair_programmer_model = config.get("pair_programmer_model", "haiku")
     write_status("pair_programmer", "done", hook_input,
-                 summary=f"{verdict}: {additional_context[:60] if additional_context else 'no feedback'}",
+                 summary=status_summary,
                  elapsed_s=elapsed, cost_usd=pair_programmer_cost, model=pair_programmer_model)
     print(json.dumps(output))
 
