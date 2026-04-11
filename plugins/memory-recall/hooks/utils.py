@@ -75,6 +75,11 @@ def write_status(hook_name, state, hook_input, summary="", elapsed_s=0, cost_usd
     now_hms = time.strftime("%H:%M:%S")
     total_runs = prev.get("total_runs", 0)
     skipped_count = prev.get("skipped_count", 0)
+    prev_cumulative = prev.get("cumulative_cost_usd", 0)
+    # Cumulative cost accrues only on fresh done writes. When skipped or running
+    # state is written we preserve prev cost_usd display, so cumulative must not
+    # double-count.
+    cumulative_cost_usd = prev_cumulative
 
     if skipped:
         # Preserve previous display state, bump skipped_count.
@@ -93,6 +98,10 @@ def write_status(hook_name, state, hook_input, summary="", elapsed_s=0, cost_usd
         model = prev.get("model", model)
         total_runs += 1
         _cache[f"{session_id}:{fname}:started_at"] = now_hms
+    else:
+        # Fresh done write: add this invocation's cost to cumulative.
+        if isinstance(cost_usd, (int, float)):
+            cumulative_cost_usd = prev_cumulative + cost_usd
 
     # Single code path: always build complete record.
     data = {
@@ -103,6 +112,7 @@ def write_status(hook_name, state, hook_input, summary="", elapsed_s=0, cost_usd
         "summary": summary,
         "elapsed_s": round(elapsed_s, 2) if isinstance(elapsed_s, (int, float)) else 0,
         "cost_usd": round(cost_usd, 4) if isinstance(cost_usd, (int, float)) else 0,
+        "cumulative_cost_usd": round(cumulative_cost_usd, 4) if isinstance(cumulative_cost_usd, (int, float)) else 0,
         "model": model,
         "started_at": _cache.get(f"{session_id}:{fname}:started_at", prev.get("started_at", now_hms)),
         "finished_at": now_hms if state not in ("running", "") else prev.get("finished_at", ""),
