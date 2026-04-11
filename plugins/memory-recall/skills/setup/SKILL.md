@@ -114,6 +114,9 @@ Each subsystem has its own model config. Ask if user wants different models for 
 - `pair_programmer_model`: Model for pair programmer evaluation. Default: `haiku`.
 - `curator_model`: Model for curator consolidation. Default: `haiku`.
 
+**Distiller option:**
+- `distiller_enabled`: Enable profile distillation in curator Phase 6. Default: `true`. When enabled, curator extracts user thinking patterns into profile files (`DATA_DIR/profile/`) that the pair programmer reads for evaluation.
+
 Only ask about options the user wants to customize. Defaults are fine for most users.
 
 ## Step 4: Apply config

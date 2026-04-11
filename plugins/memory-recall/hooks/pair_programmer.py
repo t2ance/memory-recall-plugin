@@ -20,10 +20,12 @@ from discover import discover_memory
 from utils import (
     DATA_DIR,
     call_sdk_haiku,
+    compute_profile_dir,
     extract_context,
     hook_main, maybe_go_async,
     load_plugin_config,
     parse_frontmatter,
+    read_memory_files,
     write_log, write_status,
 )
 
@@ -36,12 +38,15 @@ STATE_FILE = os.path.join(DATA_DIR, "pair_programmer_state.json")
 SYSTEM_PROMPT = """\
 You are a silent sidecar running inside a Claude Code hook. You observe the main agent's actions and provide feedback from the user's perspective. You are NOT in a conversation with the user -- the user cannot see or respond to your output. Your ONLY job is to evaluate and return structured feedback via the output tool. Never ask questions, never explain, never converse.
 
-You are the user's pair programmer -- an experienced Navigator to the agent's Driver. You observe what the agent is doing, recall relevant user preferences and past experience, and provide soft suggestions when you notice something worth flagging.
+You are the user's pair programmer -- a stage pacer that monitors the main agent's progress and decides whether it should continue, adjust, or stop for user clarification. You have access to two knowledge sources:
+
+1. User Profile: distilled thinking patterns, values, and judgment heuristics specific to this user. These represent durable traits learned over many sessions. Profile is your primary reference.
+2. Memory Bank: individual user preferences, past experience, and project context. These are episodic evidence that supplements the profile.
 
 You evaluate across three dimensions:
 
 (a) Preference Alignment: Does this action match how the user works?
-    Check the recalled user preferences below. Flag if the agent is doing something the user would do differently.
+    Check the profile and recalled preferences. Flag if the agent is doing something the user would do differently.
 
 (b) Experience Recall: Has this situation been seen before?
     Check the recalled project memories for past solutions or learnings. Flag if the agent is re-exploring something already solved, or missing a known solution.
@@ -49,12 +54,28 @@ You evaluate across three dimensions:
 (c) Strategic Oversight: Is the high-level direction correct?
     Should the agent step back, try a different approach, or search for help first? Flag architectural concerns, missing steps, or better alternatives.
 
+## When to break the stage
+
+Override all three dimensions and output overall: "break" when you encounter any of these:
+- The agent's action is about to act on an assumption that contradicts or extends a profile statement into a context the profile does not clearly cover. Do not silently apply the statement; ask the user.
+- The agent appears to be in a loop (repeating the same tool call pattern with no progress visible in recent context).
+- The agent is about to make a major decision (design choice, architectural change, non-trivial refactor, dependency addition) where the user's stance cannot be predicted from profile alone.
+
+When emitting break, set stage_break_reason to a strongly-worded directive that:
+1. Explicitly instructs main agent to stop all further tool calls
+2. Names the specific question to surface to the user
+3. Says "do not proceed on assumptions"
+
+Example stage_break_reason:
+"STOP CURRENT STAGE. Do not invoke any more tools. Before continuing, you must ask the user: 'You rejected defensive programming in ML code, but this looks like a web input validation path -- should I add validation here or follow the no-defensive-programming rule?' Do not proceed on assumptions."
+
 Rules:
-- Only flag genuinely useful observations. If nothing notable, return all null.
+- Only flag genuinely useful observations. If nothing notable, return overall: "ok" with all dimensions null.
 - Be specific and actionable: "Search web for this error before patching" not "Be careful."
 - 1-2 sentences per dimension max.
-- You suggest, the agent decides. Never force or block.
-- Always provide a tldr: one actionable sentence under 80 chars for the user dashboard. If nothing notable, use "ok"."""
+- For suggest: you suggest, the agent decides. Never force or block.
+- For break: the directive must be unambiguous and strongly worded.
+- Always provide a tldr: one actionable sentence under 80 chars for the user dashboard. If nothing notable, use "ok". If breaking, prefix tldr with "BREAK:"."""
 
 EVAL_SCHEMA = {
     "type": "json_schema",
@@ -102,11 +123,15 @@ EVAL_SCHEMA = {
             },
             "overall": {
                 "type": "string",
-                "enum": ["ok", "suggest"],
+                "enum": ["ok", "suggest", "break"],
             },
             "tldr": {
                 "type": "string",
-                "description": "One-sentence actionable summary for the user dashboard. Under 80 chars.",
+                "description": "One-sentence actionable summary for the user dashboard. Under 80 chars. Prefix with 'BREAK:' when overall is 'break'.",
+            },
+            "stage_break_reason": {
+                "type": "string",
+                "description": "Only set when overall is 'break'. Contains the strongly-worded directive text that will be injected verbatim into the main agent's additionalContext.",
             },
         },
         "required": ["preference", "experience", "strategy", "overall", "tldr"],
@@ -218,6 +243,42 @@ def build_trajectory(hook_input, pp):
 
 
 # ---------------------------------------------------------------------------
+# Visibility tag trailers (appended to additionalContext for user auditing)
+# ---------------------------------------------------------------------------
+
+SUGGEST_TAG_TRAILER = '\n\nIMPORTANT: When your next response addresses or acts on the feedback above, place the literal tag "[PP preference]" as the very first line of your response, above everything else. This lets the user visually see that Pair Programmer\'s input influenced your response. If you decide the feedback does not apply and you will not change course, still lead with "[PP preference]" and explain why you\'re keeping the original approach.'
+
+BREAK_TAG_TRAILER = '\n\nIMPORTANT: When you surface this question to the user, place the literal tag "[PP break]" as the very first line of your message, above everything else. This tells the user clearly that Pair Programmer has halted your stage and is requesting clarification, not that you are asking out of your own uncertainty.'
+
+
+# ---------------------------------------------------------------------------
+# Profile reading (PP's private knowledge, not shown to main agent)
+# ---------------------------------------------------------------------------
+
+def read_profile():
+    """Read all profile files. Returns formatted text for PP's Haiku prompt.
+    Profile is PP's private knowledge source -- distilled user thinking patterns.
+    This text goes into PP's eval prompt, NOT into the main agent's context."""
+    profile_dir = compute_profile_dir()
+    if not os.path.isdir(profile_dir):
+        return ""
+    parts = []
+    for fname in sorted(os.listdir(profile_dir)):
+        if not fname.endswith(".md") or fname == "MEMORY.md":
+            continue
+        path = os.path.join(profile_dir, fname)
+        with open(path) as f:
+            content = f.read()[:3000]
+        name = fname[:-3]
+        for line in content.split("\n"):
+            if line.startswith("name:"):
+                name = line.partition(":")[2].strip()
+                break
+        parts.append(f"### {name}\n{content}")
+    return "\n\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
 # Memory recall for pair programmer
 # ---------------------------------------------------------------------------
 
@@ -255,12 +316,14 @@ async def recall_context(trajectory, cwd, pp):
 # Evaluation
 # ---------------------------------------------------------------------------
 
-async def evaluate(trajectory, memories_text, pp):
-    """Single merged Haiku call evaluating all 3 dimensions. pp is config['pair_programmer']."""
+async def evaluate(trajectory, memories_text, profile_text, pp):
+    """Single merged Haiku call evaluating all 3 dimensions + break decision. pp is config['pair_programmer']."""
     prompt_parts = [trajectory]
+    if profile_text:
+        prompt_parts.append(f"## User Profile (distilled thinking patterns)\n{profile_text}")
     if memories_text:
         prompt_parts.append(f"## User Preferences & Past Experience (from Memory Bank)\n{memories_text}")
-    prompt_parts.append("## Task\nEvaluate the agent's current action across all three dimensions.")
+    prompt_parts.append("## Task\nEvaluate the agent's current action across all three dimensions. Also decide if the stage should break for user clarification.")
     prompt = "\n\n".join(prompt_parts)
 
     parsed, usage = await call_sdk_haiku(
@@ -276,11 +339,24 @@ async def evaluate(trajectory, memories_text, pp):
 # ---------------------------------------------------------------------------
 
 def format_output(parsed):
-    """Format evaluation results into additionalContext string (multi-line, for agent)."""
+    """Format evaluation results into additionalContext string.
+
+    - ok: returns None (no output)
+    - suggest: existing dimension feedback + [PP preference] visibility tag trailer
+    - break: stage_break_reason verbatim + [PP break] visibility tag trailer
+    """
     if not parsed:
         return None
 
-    if parsed.get("overall") == "ok":
+    overall = parsed.get("overall", "ok")
+
+    if overall == "break":
+        reason = parsed.get("stage_break_reason", "")
+        if not reason:
+            return None
+        return reason + BREAK_TAG_TRAILER
+
+    if overall != "suggest":
         return None
 
     dim_labels = {
@@ -302,14 +378,17 @@ def format_output(parsed):
     if not sections:
         return None
 
-    return "Pair programmer feedback:\n" + "\n".join(sections)
+    return "Pair programmer feedback:\n" + "\n".join(sections) + SUGGEST_TAG_TRAILER
 
 
 def format_status_summary(parsed):
     """Format a single-line summary for statusline (visible to user)."""
     if not parsed or parsed.get("overall") == "ok":
         return "ok"
-    return parsed.get("tldr", "ok")
+    tldr = parsed.get("tldr", "ok")
+    if parsed.get("overall") == "break" and not tldr.startswith("BREAK:"):
+        return f"BREAK: {tldr}"
+    return tldr
 
 
 # ---------------------------------------------------------------------------
@@ -347,11 +426,14 @@ def main():
     # Build trajectory
     trajectory = build_trajectory(hook_input, pp)
 
+    # Read profile (direct file read, no SDK call)
+    profile_text = read_profile()
+
     # Recall relevant memories (1 SDK call)
     memories_text, recall_usage = asyncio.run(recall_context(trajectory, cwd, pp))
 
     # Evaluate all dimensions (1 SDK call)
-    parsed, eval_usage = asyncio.run(evaluate(trajectory, memories_text, pp))
+    parsed, eval_usage = asyncio.run(evaluate(trajectory, memories_text, profile_text, pp))
 
     # Update cooldown state
     write_state({"last_eval_ts": time.time()})
@@ -367,6 +449,7 @@ def main():
         "tool_name": hook_input.get("tool_name"),
         "verdict": parsed.get("overall") if parsed else "no_response",
         "has_feedback": additional_context is not None,
+        "has_profile": bool(profile_text),
         "recall_usage": recall_usage,
         "eval_usage": eval_usage,
         "elapsed_s": elapsed,

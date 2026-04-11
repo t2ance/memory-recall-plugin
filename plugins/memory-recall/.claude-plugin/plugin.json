@@ -333,6 +333,12 @@
       "default": 1,
       "min": 0,
       "max": 48
+    },
+    "distiller_enabled": {
+      "type": "boolean",
+      "title": "Profile Distiller Enabled",
+      "description": "Enable the DISTILL phase in curator that extracts user thinking patterns into profile files.",
+      "default": true
     }
   }
 }

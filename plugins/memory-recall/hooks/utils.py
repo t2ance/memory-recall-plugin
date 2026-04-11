@@ -158,6 +158,7 @@ def _cast(env_val, spec_type, default):
 _SUBSYSTEM_PREFIXES = [
     ('pair_programmer_', 'pair_programmer'),
     ('memory_save_', 'memory_save'),
+    ('distiller_', 'distiller'),
     ('curator_', 'curator'),
     ('recall_', 'recall'),
 ]
@@ -474,6 +475,23 @@ def compute_memory_dirs(cwd):
     )
     global_mem_dir = os.path.join(DATA_DIR, "global-memory")
     return proj_mem_dir, global_mem_dir
+
+
+PROFILE_DIR = os.path.join(DATA_DIR, "profile")
+
+
+def compute_profile_dir():
+    """Return the PP profile directory path."""
+    return PROFILE_DIR
+
+
+def to_filename(name):
+    """Sanitize a name into a safe markdown filename."""
+    s = "".join(c if c.isalnum() or c in "-_" else "_" for c in name.lower().strip())
+    while "__" in s:
+        s = s.replace("__", "_")
+    s = s.strip("_") or "memory"
+    return s[:60].rstrip("_") + ".md"
 
 
 def read_memory_files(memory_dir):

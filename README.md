@@ -101,6 +101,12 @@ Where `{dim}` is one of: `memory`, `skills`, `tools`, `agents`.
 | `curator_async` | Run curator asynchronously | `true` |
 | `curator_cooldown_h` | Min hours between curator runs | `1` |
 
+**Distiller options:**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `distiller_enabled` | Enable profile distillation (curator Phase 6) | `true` |
+
 ## How It Works
 
 ### Recall (UserPromptSubmit / SubagentStart)
@@ -127,12 +133,16 @@ Config: `memory_save_enabled` (default true), `memory_save_model` (default haiku
 
 After action tools (Edit/Write/Bash/NotebookEdit), the hook:
 
-1. Builds trajectory from current tool call + recent conversation
-2. Recalls relevant memories from Memory Bank
-3. Evaluates across 3 dimensions (preference alignment, experience recall, strategic oversight)
-4. Injects soft suggestions via `additionalContext`
+1. Reads distilled user profile from `DATA_DIR/profile/` (PP's private knowledge)
+2. Builds trajectory from current tool call + recent conversation
+3. Recalls relevant memories from Memory Bank
+4. Evaluates across 3 dimensions (preference alignment, experience recall, strategic oversight)
+5. Outputs one of 3 states:
+   - `ok`: nothing to flag
+   - `suggest`: soft suggestion via `additionalContext`, main agent prefixes response with `[PP preference]`
+   - `break`: strongly-worded directive to stop and ask user for clarification, main agent prefixes with `[PP break]`
 
-Enabled by default. Evaluates every action tool call, with 120s cooldown between evaluations. Outputs a TL;DR summary for the statusline and full multi-dimensional feedback as `additionalContext` for the agent.
+Enabled by default. 120s cooldown between evaluations. Profile files are produced by the curator's DISTILL phase and contain distilled user thinking patterns.
 
 ### Async Support
 
@@ -212,10 +222,10 @@ hooks/
   recall.py             # Recall hook: parallel dispatch + merge + inject
   memory_save.py        # Memory save hook: Haiku CRUD on conversation knowledge
   pair_programmer.py    # Pair programmer hook: 3-dimension evaluation + TL;DR
-  memory_curator.py     # Curator hook: periodic memory consolidation (automated dream)
+  memory_curator.py     # Curator hook: periodic memory consolidation + profile distillation
   discover.py           # Resource discovery (file scan + hardcoded fallback)
   backends.py           # 3 recall backend implementations
-  utils.py              # Shared: Agent SDK wrapper, config, logging, async mode
+  utils.py              # Shared: Agent SDK wrapper, config, logging, async mode, profile dir
   constants.py          # Hardcoded built-in skills, deferred tools, agent types
   embedding_daemon.py   # Local RAG daemon (sentence-transformers)
   hooks.json            # Hook registration (4 hooks)

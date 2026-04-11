@@ -24,11 +24,13 @@ from utils import (
     DATA_DIR, STATUS_DIR, HOME,
     call_sdk_haiku,
     compute_memory_dirs,
+    compute_profile_dir,
     extract_context,
     hook_main, maybe_go_async,
     load_plugin_config,
     parse_frontmatter,
     read_memory_files,
+    to_filename,
     write_log, write_status,
 )
 
@@ -385,12 +387,7 @@ def execute_merges(merge_results, merge_groups, memory_dir):
     return executed
 
 
-def _to_filename(name):
-    s = "".join(c if c.isalnum() or c in "-_" else "_" for c in name.lower().strip())
-    while "__" in s:
-        s = s.replace("__", "_")
-    s = s.strip("_") or "memory"
-    return s[:60].rstrip("_") + ".md"
+_to_filename = to_filename  # alias for backward compat within this file
 
 
 def rebuild_index(memory_dir):
@@ -509,7 +506,228 @@ async def run_pipeline(memory_entries, proj_dir, hook_input, cu):
         "verified_deletes": verified_deletes,
         "verification_overrides": verification_overrides,
         "timings": {"analysis_s": t1_s, "synthesis_s": t2_s, "verification_s": t3_s},
+        "claude_md": claude_md,
+        "transcript": transcript,
     }, total_usage, None
+
+
+# ---------------------------------------------------------------------------
+# Phase 6: DISTILL -- extract user profile from memory bank + transcript
+# ---------------------------------------------------------------------------
+
+DISTILL_PROMPT = """\
+You are the PP profile distiller. Your job is to maintain a concise record
+of the user's durable thinking patterns, judgment heuristics, and values
+boundaries -- stored as natural-language markdown files.
+
+## Inputs
+
+### Existing profile files (what we already know about the user)
+{profile_listing}
+
+### Memory bank user + feedback entries (evidence sources)
+{evidence_listing}
+
+### User's global CLAUDE.md
+{claude_md}
+
+### Recent transcript excerpt (grounding only)
+{transcript}
+
+## Your task
+
+For each potential user pattern visible in the inputs, apply three
+qualitative verifications. All three must hold for the pattern to qualify
+as a profile entry.
+
+**V1 -- Cross-scenario**: Does the pattern appear across distinctly different
+contexts, not just one conversation topic? If the only evidence is a single
+conversation or a single narrow topic, V1 fails.
+
+**V2 -- Generative**: Can the pattern predict the user's stance on a novel
+situation they have not explicitly discussed? If the pattern only restates
+what the user already said without generalization, V2 fails.
+
+**V3 -- Distinctive**: Is the pattern specific to this user, or is it common
+sense among skilled programmers? If every competent developer would agree
+with it by default, V3 fails. Do not store common sense.
+
+If all three hold, decide:
+- New pattern, no existing profile file covers it -> ADD
+- Existing profile file covers it and is still accurate -> NOOP
+- Existing profile file covers it but needs refinement -> UPDATE
+- Existing profile file is contradicted by a principled shift in user
+  stance (not just an exception) -> DELETE or UPDATE to reflect the shift
+
+Profile file content must use:
+- Frontmatter: name (short snake_case id), description (one line), type: profile
+- Body: natural language statement of the pattern
+- **Why**: grounded evidence in prose. Cite evidence sources naturally.
+- **How to apply**: when should PP flag deviations? When should PP escalate
+  to break because context is ambiguous?
+
+Do not distill:
+- Factual profile (role, tech stack) -- stays in memory bank user type
+- Project-specific decisions -- stays in memory bank project type
+- Bug fixes, implementation details, one-time investigation notes
+
+Return a JSON object with your actions."""
+
+DISTILL_SCHEMA = {
+    "type": "json_schema",
+    "schema": {
+        "type": "object",
+        "properties": {
+            "actions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "action": {"type": "string"},
+                        "name": {"type": "string"},
+                        "description": {"type": "string"},
+                        "content": {"type": "string"},
+                        "target_file": {"type": "string"},
+                        "reason": {"type": "string"},
+                    },
+                    "required": ["action"],
+                },
+            },
+        },
+        "required": ["actions"],
+    },
+}
+
+
+def build_distill_prompt(profile_entries, evidence_entries, claude_md, transcript):
+    """Build the DISTILL prompt with all input data."""
+    # Profile listing (full content)
+    if profile_entries:
+        profile_lines = []
+        for e in profile_entries:
+            content = read_file_content(e)
+            profile_lines.append(f"### [{e['file']}] {e['name']}\n{content}")
+        profile_listing = "\n\n".join(profile_lines)
+    else:
+        profile_listing = "(no profile files yet)"
+
+    # Evidence listing (user + feedback entries from memory bank, full content)
+    if evidence_entries:
+        evidence_lines = []
+        for e in evidence_entries:
+            content = read_file_content(e)
+            evidence_lines.append(f"### [{e['file']}] {e['name']} (type: {e['type']})\n{content}")
+        evidence_listing = "\n\n".join(evidence_lines)
+    else:
+        evidence_listing = "(no user/feedback entries in memory bank)"
+
+    return DISTILL_PROMPT.format(
+        profile_listing=profile_listing,
+        evidence_listing=evidence_listing,
+        claude_md=claude_md or "(no CLAUDE.md found)",
+        transcript=transcript or "(no transcript available)",
+    )
+
+
+def execute_distill_actions(actions, profile_dir):
+    """Execute DISTILL actions (ADD/UPDATE/DELETE) against the profile dir.
+    Reuses the same logic as memory_save's execute pattern."""
+    os.makedirs(profile_dir, exist_ok=True)
+    executed = []
+
+    for a in actions:
+        act = a.get("action", "NOOP").upper()
+
+        if act == "ADD":
+            name = a.get("name", "untitled")
+            desc = a.get("description", "")
+            content = a.get("content", "")
+            reason = a.get("reason", "")
+            if not content:
+                continue
+            fname = _to_filename(name)
+            path = os.path.join(profile_dir, fname)
+            if os.path.exists(path):
+                base = fname[:-3]
+                found_slot = False
+                for i in range(2, 20):
+                    fname = f"{base}_{i}.md"
+                    path = os.path.join(profile_dir, fname)
+                    if not os.path.exists(path):
+                        found_slot = True
+                        break
+                assert found_slot, f"All filename slots taken for {base}.md"
+            with open(path, "w") as f:
+                f.write(f"---\nname: {name}\ndescription: {desc}\ntype: profile\n---\n\n{content}\n")
+            executed.append({"action": "add", "file": fname, "reason": reason})
+
+        elif act == "UPDATE":
+            target = a.get("target_file", "")
+            path = os.path.join(profile_dir, target)
+            if not target or not os.path.isfile(path):
+                continue
+            fm = parse_frontmatter(path)
+            name = fm.get("name", target.replace(".md", ""))
+            desc = a.get("description", fm.get("description", ""))
+            content = a.get("content", "")
+            reason = a.get("reason", "")
+            if not content:
+                continue
+            with open(path, "w") as f:
+                f.write(f"---\nname: {name}\ndescription: {desc}\ntype: profile\n---\n\n{content}\n")
+            executed.append({"action": "update", "file": target, "reason": reason})
+
+        elif act == "DELETE":
+            target = a.get("target_file", "")
+            path = os.path.join(profile_dir, target)
+            if not target or not os.path.isfile(path):
+                continue
+            reason = a.get("reason", "")
+            os.remove(path)
+            executed.append({"action": "delete", "file": target, "reason": reason})
+
+    return executed
+
+
+async def run_distill(memory_entries, claude_md, transcript, hook_input, cu):
+    """Run the DISTILL phase: read evidence, call LLM, write profile files."""
+    profile_dir = compute_profile_dir()
+    profile_entries = read_memory_files(profile_dir)
+
+    # Filter memory bank to user + feedback types only (evidence for distillation)
+    evidence_entries = [e for e in memory_entries if e.get("type") in ("user", "feedback")]
+
+    if not evidence_entries and not profile_entries:
+        return None, {}, "no evidence or profile to distill from"
+
+    prompt = build_distill_prompt(profile_entries, evidence_entries, claude_md, transcript)
+    t_start = time.time()
+    parsed, usage = await call_sdk_haiku(
+        prompt, "Return structured JSON only.", DISTILL_SCHEMA,
+        model=cu['model'], effort=cu['effort'],
+    )
+    distill_s = round(time.time() - t_start, 2)
+
+    if not parsed:
+        return None, usage, f"no response (distill_s={distill_s})"
+
+    actions = parsed.get("actions", [])
+    actionable = [a for a in actions if a.get("action", "").upper() != "NOOP"]
+
+    executed = []
+    if actionable and not DRY_RUN:
+        executed = execute_distill_actions(actionable, profile_dir)
+        if executed:
+            rebuild_index(profile_dir)
+
+    return {
+        "actions": actions,
+        "executed": executed,
+        "distill_s": distill_s,
+        "profile_before": len(profile_entries),
+        "evidence_count": len(evidence_entries),
+        "dry_run": DRY_RUN,
+    }, usage, None
 
 
 # ---------------------------------------------------------------------------
@@ -627,12 +845,54 @@ def main():
         "elapsed_s": elapsed,
     })
 
+    # ---- Phase 6: DISTILL (profile extraction) ----
+    # Intentionally uses pre-CLEAN memory_entries: CLEAN may delete stale entries
+    # but their content is still valid evidence for distillation. The profile's
+    # Why section inlines evidence as prose, so it survives source deletion.
+    distill_result = None
+    distill_usage = {}
+    distill_error = None
+    distiller_enabled = config['distiller']['enabled']
+
+    if distiller_enabled:
+        distill_result, distill_usage, distill_error = asyncio.run(
+            run_distill(memory_entries, result["claude_md"], result["transcript"],
+                        hook_input, cu)
+        )
+
+        if distill_error:
+            write_log({"event": "distill", "status": "error", "error": distill_error,
+                        "usage": distill_usage})
+        elif distill_result:
+            write_log({
+                "event": "distill",
+                "status": "dry_run" if DRY_RUN else "executed",
+                "profile_before": distill_result["profile_before"],
+                "evidence_count": distill_result["evidence_count"],
+                "actions": [{"action": a.get("action"), "name": a.get("name", a.get("target_file", ""))}
+                            for a in distill_result["actions"]],
+                "executed": distill_result["executed"],
+                "distill_s": distill_result["distill_s"],
+                "usage": distill_usage,
+            })
+
+    # Final summary
+    total_cost = usage.get("cost_usd", 0) + distill_usage.get("cost_usd", 0)
+    elapsed = round(time.time() - t_start, 2)
+
+    distill_suffix = ""
+    if distiller_enabled and distill_result and not DRY_RUN:
+        n_distilled = len(distill_result.get("executed", []))
+        if n_distilled:
+            distill_suffix = f", {n_distilled} profile"
+
     summary = (f"{len(memory_entries)} files: "
                f"{len(del_executed)} deleted, {len(merge_executed)} merged"
-               + (f", {len(overrides)} saved by verification" if overrides else ""))
+               + (f", {len(overrides)} saved by verification" if overrides else "")
+               + distill_suffix)
     write_status("curator", "done", hook_input,
                  summary=summary, elapsed_s=elapsed,
-                 cost_usd=usage.get("cost_usd", 0),
+                 cost_usd=total_cost,
                  model=cu['model'])
 
 

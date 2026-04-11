@@ -23,6 +23,7 @@ from utils import (
     load_plugin_config,
     parse_frontmatter,
     read_memory_files,
+    to_filename,
     write_log, write_status,
 )
 
@@ -204,12 +205,7 @@ def execute_actions(actions, memory_dir):
     return executed
 
 
-def _to_filename(name):
-    s = "".join(c if c.isalnum() or c in "-_" else "_" for c in name.lower().strip())
-    while "__" in s:
-        s = s.replace("__", "_")
-    s = s.strip("_") or "memory"
-    return s[:60].rstrip("_") + ".md"
+_to_filename = to_filename  # alias for backward compat within this file
 
 
 def _update_index(memory_dir, fname, name, desc, action):
