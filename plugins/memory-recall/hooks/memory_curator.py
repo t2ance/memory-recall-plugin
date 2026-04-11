@@ -90,6 +90,11 @@ MERGE (combine into merge_group):
 - Only group files that are genuinely about the same narrow topic.
   "code quality" is NOT one topic -- "no magic numbers" and "consistent naming" are separate topics.
 
+RENAME (keep content, fix the filename):
+- File is worth keeping, but its name violates naming rules (see below).
+- Propose a new snake_case name in the `new_name` field. Do NOT include `.md`.
+- RENAME is orthogonal to content. If a file is both badly named AND stale, prefer DELETE. If badly named AND should merge with others, prefer MERGE (synthesis will pick a clean name).
+
 KEEP:
 - User preferences and working style
 - Non-obvious reference knowledge not derivable from code
@@ -97,6 +102,26 @@ KEEP:
 - Principles and patterns that apply across future sessions
 - UNRESOLVED questions or open issues still being investigated
 - Files referenced by or complementary to CLAUDE.md
+
+## Naming Rules (for RENAME judgment)
+
+A filename is broken if ANY of these hold. When broken, propose RENAME with a clean `new_name`:
+
+- **Too long**: target <= 20 chars, hard cap 30. Longer than 30 is always broken.
+- **Trailing `_md` artifact**: name ending in `_md` is a legacy bug (the `.md` suffix leaked into the name). Strip it.
+- **Mid-word truncation**: name ends in a single orphan letter like `_m`, `_s`, `_a`, etc. — that's a cut-off word. Infer the original token from the file content and restore or drop.
+- **Type prefix**: names starting with `feedback_`, `user_`, `project_`, or `reference_` redundantly encode the type field. Drop the prefix.
+- **Filler words**: tokens like `and`, `or`, `the`, `with`, `for`, `of`, `to`, `in`, `on` add length without meaning. Drop them.
+- **Redundant/verbose**: descriptive phrases beyond 2-3 tokens. Pick the discriminating noun.
+
+Good examples (from bad → clean):
+- `feedback_mirror_host_system_style_when_extending` -> `mirror_host_style`
+- `claude_code_plugin_versions_and_configuration_md` -> `plugin_versions`
+- `statusline_architecture_persistent_dashboard_and_lifecycle_m` -> `statusline_dashboard`
+- `active_projects_md` -> `active_projects`
+- `project_training_supervisor` -> `training_supervisor`
+
+When in doubt about which discriminating word to keep, keep the one a future grep would use to find the file.
 
 Return a JSON object classifying EVERY file."""
 
@@ -113,6 +138,7 @@ ANALYSIS_SCHEMA = {
                         "file": {"type": "string"},
                         "action": {"type": "string"},
                         "merge_group": {"type": "string"},
+                        "new_name": {"type": "string"},
                         "reason": {"type": "string"},
                     },
                     "required": ["file", "action", "reason"],
@@ -390,6 +416,73 @@ def execute_merges(merge_results, merge_groups, memory_dir):
 _to_filename = to_filename  # alias for backward compat within this file
 
 
+def execute_renames(renames, memory_dir):
+    """Rename files whose names violate the naming rules.
+
+    Each item: (old_fname, new_name, reason) where new_name is the bare
+    name (no .md). Reads the old file, rewrites frontmatter `name:` field
+    to match the new name, writes to new filename, deletes the old file.
+    Skips if old file missing or new filename collides.
+    """
+    executed = []
+    for old_fname, new_name, reason in renames:
+        old_path = os.path.join(memory_dir, old_fname)
+        if not os.path.isfile(old_path):
+            continue
+
+        new_fname = _to_filename(new_name)
+        if new_fname == old_fname:
+            # Agent proposed the same name after sanitization; nothing to do.
+            continue
+        new_path = os.path.join(memory_dir, new_fname)
+
+        # Collision: append _2, _3, ... up to _19 and keep name in sync
+        effective_name = new_name
+        if os.path.exists(new_path):
+            base = new_fname[:-3]
+            found = False
+            for i in range(2, 20):
+                candidate = f"{base}_{i}.md"
+                cand_path = os.path.join(memory_dir, candidate)
+                if not os.path.exists(cand_path):
+                    new_fname = candidate
+                    new_path = cand_path
+                    effective_name = f"{new_name}_{i}"
+                    found = True
+                    break
+            if not found:
+                continue  # skip this rename, all slots taken
+
+        with open(old_path) as f:
+            old_content = f.read()
+
+        # Rewrite frontmatter name: field to match the effective filename
+        new_content = old_content
+        if old_content.startswith("---"):
+            end = old_content.find("---", 3)
+            if end != -1:
+                header = old_content[3:end]
+                body = old_content[end:]
+                new_header_lines = []
+                name_replaced = False
+                for line in header.split("\n"):
+                    if line.strip().startswith("name:"):
+                        new_header_lines.append(f"name: {effective_name}")
+                        name_replaced = True
+                    else:
+                        new_header_lines.append(line)
+                if not name_replaced:
+                    new_header_lines.insert(0, f"name: {effective_name}")
+                new_content = "---" + "\n".join(new_header_lines) + body
+
+        with open(new_path, "w") as f:
+            f.write(new_content)
+        os.remove(old_path)
+        executed.append({"action": "RENAME", "file": old_fname,
+                         "renamed_to": new_fname, "reason": reason})
+    return executed
+
+
 def rebuild_index(memory_dir):
     """Rebuild MEMORY.md from all .md files on disk (except MEMORY.md itself)."""
     entries = read_memory_files(memory_dir)
@@ -443,6 +536,7 @@ async def run_pipeline(memory_entries, proj_dir, hook_input, cu):
     # Parse decisions into groups
     delete_candidates = []
     merge_groups = {}  # group_name -> [files]
+    rename_candidates = []  # list of (old_fname, new_name, reason)
     keep_files = []
 
     for d in decisions:
@@ -454,6 +548,12 @@ async def run_pipeline(memory_entries, proj_dir, hook_input, cu):
         elif action == "MERGE":
             group = d.get("merge_group", "ungrouped")
             merge_groups.setdefault(group, []).append(fname)
+        elif action == "RENAME":
+            new_name = d.get("new_name", "").strip()
+            if new_name:
+                rename_candidates.append((fname, new_name, reason))
+            else:
+                keep_files.append(fname)
         else:
             keep_files.append(fname)
 
@@ -501,6 +601,7 @@ async def run_pipeline(memory_entries, proj_dir, hook_input, cu):
         "analysis": decisions,
         "delete_candidates": delete_candidates,
         "merge_groups": merge_groups,
+        "rename_candidates": rename_candidates,
         "keep_files": keep_files,
         "merge_results": merge_results,
         "verified_deletes": verified_deletes,
@@ -792,6 +893,7 @@ def main():
 
     merge_groups = result["merge_groups"]
     merge_results = result["merge_results"]
+    rename_candidates = result["rename_candidates"]
     verified_deletes = result["verified_deletes"]
     overrides = result["verification_overrides"]
     timings = result["timings"]
@@ -807,6 +909,7 @@ def main():
             "verification_overrides": [(f, r) for f, r in overrides],
             "merge_groups": {k: v for k, v in merge_groups.items()},
             "merge_results_count": len(merge_results),
+            "rename_candidates": [(old, new) for old, new, _ in rename_candidates],
             "keeps": len(result["keep_files"]),
             "timings": timings,
             "usage": usage,
@@ -814,8 +917,9 @@ def main():
         })
         n_del = len(verified_deletes)
         n_merge = len(merge_results)
+        n_rename = len(rename_candidates)
         n_override = len(overrides)
-        summary = f"dry run: {n_del} delete, {n_merge} merge, {n_override} overrides"
+        summary = f"dry run: {n_del} delete, {n_merge} merge, {n_rename} rename, {n_override} overrides"
         write_status("curator", "done", hook_input, summary=summary,
                      elapsed_s=elapsed, cost_usd=usage.get("cost_usd", 0),
                      model=cu['model'])
@@ -824,7 +928,8 @@ def main():
     # Execute
     del_executed = execute_deletes(verified_deletes, proj_dir)
     merge_executed = execute_merges(merge_results, merge_groups, proj_dir)
-    all_executed = del_executed + merge_executed
+    rename_executed = execute_renames(rename_candidates, proj_dir)
+    all_executed = del_executed + merge_executed + rename_executed
 
     if all_executed:
         rebuild_index(proj_dir)
@@ -837,6 +942,7 @@ def main():
         "files_before": len(memory_entries),
         "deletes": len(del_executed),
         "merges": len(merge_executed),
+        "renames": len(rename_executed),
         "keeps": len(result["keep_files"]),
         "verification_overrides": [(f, r) for f, r in overrides],
         "executed": all_executed,
@@ -888,6 +994,7 @@ def main():
 
     summary = (f"{len(memory_entries)} files: "
                f"{len(del_executed)} deleted, {len(merge_executed)} merged"
+               + (f", {len(rename_executed)} renamed" if rename_executed else "")
                + (f", {len(overrides)} saved by verification" if overrides else "")
                + distill_suffix)
     write_status("curator", "done", hook_input,
