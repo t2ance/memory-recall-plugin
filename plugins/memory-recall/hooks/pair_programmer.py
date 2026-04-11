@@ -11,6 +11,7 @@ import json
 import os
 import random
 import sys
+import tempfile
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -22,7 +23,7 @@ from utils import (
     call_sdk_haiku,
     compute_profile_dir,
     extract_context,
-    hook_main, maybe_go_async,
+    hook_main,
     load_plugin_config,
     parse_frontmatter,
     read_memory_files,
@@ -34,6 +35,7 @@ from utils import (
 # ---------------------------------------------------------------------------
 
 STATE_FILE = os.path.join(DATA_DIR, "pair_programmer_state.json")
+PENDING_FEEDBACK_PATH = os.path.join(DATA_DIR, "pp_pending_feedback.json")
 
 SYSTEM_PROMPT = """\
 You are a silent sidecar running inside a Claude Code hook. You observe the main agent's actions and provide feedback from the user's perspective. You are NOT in a conversation with the user -- the user cannot see or respond to your output. Your ONLY job is to evaluate and return structured feedback via the output tool. Never ask questions, never explain, never converse.
@@ -218,37 +220,29 @@ def build_trajectory(hook_input, pp):
     if context:
         parts.append(f"## Recent Conversation\n{context}")
 
-    # Current tool call
+    # Current tool call (only present in PostToolUse-style events; empty in Stop)
     tool_name = hook_input.get("tool_name", "")
-    raw_input = hook_input.get("tool_input", "")
-    raw_output = hook_input.get("tool_response", "")
+    if tool_name:
+        raw_input = hook_input.get("tool_input", "")
+        raw_output = hook_input.get("tool_response", "")
 
-    # Serialize if not already string
-    tool_input_str = raw_input if isinstance(raw_input, str) else json.dumps(raw_input, indent=2, ensure_ascii=False)
-    tool_output_str = raw_output if isinstance(raw_output, str) else json.dumps(raw_output, indent=2, ensure_ascii=False)
+        # Serialize if not already string
+        tool_input_str = raw_input if isinstance(raw_input, str) else json.dumps(raw_input, indent=2, ensure_ascii=False)
+        tool_output_str = raw_output if isinstance(raw_output, str) else json.dumps(raw_output, indent=2, ensure_ascii=False)
 
-    # Truncate large values
-    max_input = pp['max_tool_input_chars']
-    max_output = pp['max_tool_output_chars']
-    if len(tool_input_str) > max_input:
-        tool_input_str = tool_input_str[:max_input] + "\n...(truncated)"
-    if len(tool_output_str) > max_output:
-        tool_output_str = tool_output_str[:max_output] + "\n...(truncated)"
+        # Truncate large values
+        max_input = pp['max_tool_input_chars']
+        max_output = pp['max_tool_output_chars']
+        if len(tool_input_str) > max_input:
+            tool_input_str = tool_input_str[:max_input] + "\n...(truncated)"
+        if len(tool_output_str) > max_output:
+            tool_output_str = tool_output_str[:max_output] + "\n...(truncated)"
 
-    parts.append(
-        f"## Current Action\nTool: {tool_name}\nInput:\n{tool_input_str}\nOutput:\n{tool_output_str}"
-    )
+        parts.append(
+            f"## Current Action\nTool: {tool_name}\nInput:\n{tool_input_str}\nOutput:\n{tool_output_str}"
+        )
 
     return "\n\n".join(parts)
-
-
-# ---------------------------------------------------------------------------
-# Visibility tag trailers (appended to additionalContext for user auditing)
-# ---------------------------------------------------------------------------
-
-SUGGEST_TAG_TRAILER = '\n\nIMPORTANT: When your next response addresses or acts on the feedback above, place the literal tag "[PP preference]" as the very first line of your response, above everything else. This lets the user visually see that Pair Programmer\'s input influenced your response. If you decide the feedback does not apply and you will not change course, still lead with "[PP preference]" and explain why you\'re keeping the original approach.'
-
-BREAK_TAG_TRAILER = '\n\nIMPORTANT: When you surface this question to the user, place the literal tag "[PP break]" as the very first line of your message, above everything else. This tells the user clearly that Pair Programmer has halted your stage and is requesting clarification, not that you are asking out of your own uncertainty.'
 
 
 # ---------------------------------------------------------------------------
@@ -339,11 +333,16 @@ async def evaluate(trajectory, memories_text, profile_text, pp):
 # ---------------------------------------------------------------------------
 
 def format_output(parsed):
-    """Format evaluation results into additionalContext string.
+    """Format evaluation results into feedback body string (no trailer protocol).
 
-    - ok: returns None (no output)
-    - suggest: existing dimension feedback + [PP preference] visibility tag trailer
-    - break: stage_break_reason verbatim + [PP break] visibility tag trailer
+    - ok: returns None (no feedback)
+    - suggest: dimension feedback body (plain)
+    - break: stage_break_reason body (plain)
+
+    Body is wrapped later by render_feedback_for_injection() with self-describing
+    header (age, verdict, evaluation time), so no trailer directive is needed
+    here -- main agent reads the rendered envelope and naturally understands
+    this is async feedback about a past turn.
     """
     if not parsed:
         return None
@@ -352,9 +351,7 @@ def format_output(parsed):
 
     if overall == "break":
         reason = parsed.get("stage_break_reason", "")
-        if not reason:
-            return None
-        return reason + BREAK_TAG_TRAILER
+        return reason if reason else None
 
     if overall != "suggest":
         return None
@@ -378,7 +375,7 @@ def format_output(parsed):
     if not sections:
         return None
 
-    return "Pair programmer feedback:\n" + "\n".join(sections) + SUGGEST_TAG_TRAILER
+    return "Pair programmer feedback:\n" + "\n".join(sections)
 
 
 def format_status_summary(parsed):
@@ -392,24 +389,98 @@ def format_status_summary(parsed):
 
 
 # ---------------------------------------------------------------------------
-# Main
+# Pending feedback file IO (atomic, CC-managed lifecycle — no daemon)
 # ---------------------------------------------------------------------------
 
-def main():
-    t_start = time.time()
-    hook_input = json.loads(sys.stdin.read())
-    if hook_input.get("hook_event_name") != "PostToolUse":
-        return
+def atomic_write_feedback(data):
+    """Write feedback dict to PENDING_FEEDBACK_PATH atomically.
 
+    Called by stop_main after Haiku eval produces a feedback body.
+    Uses tempfile + os.rename (POSIX-atomic) so a concurrent read from
+    user_prompt_main cannot see a partial file.
+    """
+    os.makedirs(DATA_DIR, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=DATA_DIR, prefix=".pp_pending_", suffix=".tmp")
+    try:
+        with os.fdopen(fd, 'w') as f:
+            json.dump(data, f, ensure_ascii=False)
+        os.rename(tmp_path, PENDING_FEEDBACK_PATH)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def consume_pending_feedback():
+    """Atomically consume PENDING_FEEDBACK_PATH. Returns dict or None.
+
+    Called by user_prompt_main. Rename-to-.consumed first so a concurrent
+    Stop-hook write cannot re-populate the file between our read and unlink.
+    Consume-once semantics: each feedback is injected at most once.
+    """
+    consumed_path = PENDING_FEEDBACK_PATH + ".consumed"
+    try:
+        os.rename(PENDING_FEEDBACK_PATH, consumed_path)
+    except FileNotFoundError:
+        return None
+    try:
+        with open(consumed_path) as f:
+            data = json.load(f)
+    finally:
+        try:
+            os.unlink(consumed_path)
+        except FileNotFoundError:
+            pass
+    return data
+
+
+def render_feedback_for_injection(feedback):
+    """Render pending feedback dict into self-describing injection string.
+
+    Self-describing header tells main agent this is async feedback about
+    the previous turn (not about the user's current message), including
+    age, verdict, and evaluation duration. No trailer directive needed —
+    main agent responds to the content naturally.
+    """
+    age_s = int(time.time() - feedback.get("evaluated_at_unix", time.time()))
+    verdict = feedback.get("verdict", "?")
+    elapsed = feedback.get("eval_elapsed_s", 0)
+    body = feedback.get("body", "")
+    header = (
+        "Pair Programmer async feedback (delayed delivery):\n"
+        "  Evaluated at end of previous turn\n"
+        f"  Evaluation age: ~{age_s}s ago\n"
+        f"  Evaluation took: {elapsed}s\n"
+        f"  Verdict: {verdict}\n"
+        "\n"
+        "--- Evaluation body ---\n"
+    )
+    return header + body
+
+
+# ---------------------------------------------------------------------------
+# Stop hook handler: synchronously evaluate the just-finished turn
+# ---------------------------------------------------------------------------
+
+def stop_main(hook_input):
+    """Stop hook handler: run Haiku evaluation of the just-finished turn.
+
+    Blocks the Stop hook for ~30-72s (Haiku eval). CC's Stop hook blocks
+    CC's own tool loop, NOT the user — the user is reading the main agent's
+    last response or typing the next prompt, so the latency is invisible.
+    Writes feedback to pending file for user_prompt_main to pick up on the
+    user's next message.
+    """
+    t_start = time.time()
     config = load_plugin_config()
     pp = config['pair_programmer']
-    maybe_go_async(pp['async'])
 
     should_eval, skip_reason = should_evaluate(hook_input, pp)
     if not should_eval:
         if skip_reason is not None:
             if skip_reason.startswith("cooldown:"):
-                # Preserve last evaluation result, add cooldown marker
                 cooldown_until = int(skip_reason.split(":")[1])
                 write_status("pair_programmer", "done", hook_input,
                              skipped=True, cooldown_until=cooldown_until)
@@ -423,56 +494,80 @@ def main():
     if not cwd:
         return
 
-    # Build trajectory
     trajectory = build_trajectory(hook_input, pp)
-
-    # Read profile (direct file read, no SDK call)
     profile_text = read_profile()
-
-    # Recall relevant memories (1 SDK call)
     memories_text, recall_usage = asyncio.run(recall_context(trajectory, cwd, pp))
-
-    # Evaluate all dimensions (1 SDK call)
     parsed, eval_usage = asyncio.run(evaluate(trajectory, memories_text, profile_text, pp))
-
-    # Update cooldown state
     write_state({"last_eval_ts": time.time()})
 
-    # Format output
-    additional_context = format_output(parsed)
-
-    # Log
+    body = format_output(parsed)
     elapsed = round(time.time() - t_start, 2)
+
     write_log({
         "event": "pair_programmer",
-
         "tool_name": hook_input.get("tool_name"),
         "verdict": parsed.get("overall") if parsed else "no_response",
-        "has_feedback": additional_context is not None,
+        "has_feedback": body is not None,
         "has_profile": bool(profile_text),
         "recall_usage": recall_usage,
         "eval_usage": eval_usage,
         "elapsed_s": elapsed,
     })
 
-    # Output JSON
-    output = {}
-    if additional_context:
-        output["hookSpecificOutput"] = {
-            "hookEventName": "PostToolUse",
-            "additionalContext": additional_context,
-        }
-
-    verdict = parsed.get("overall", "skip") if parsed else "skip"
     status_summary = format_status_summary(parsed)
-
-    pair_programmer_cost = (eval_usage.get("cost_usd", 0) if eval_usage else 0) + \
+    pp_cost = (eval_usage.get("cost_usd", 0) if eval_usage else 0) + \
               (recall_usage.get("cost_usd", 0) if recall_usage else 0)
-    pair_programmer_model = pp['model']
     write_status("pair_programmer", "done", hook_input,
                  summary=status_summary,
-                 elapsed_s=elapsed, cost_usd=pair_programmer_cost, model=pair_programmer_model)
+                 elapsed_s=elapsed, cost_usd=pp_cost, model=pp['model'])
+
+    if body:
+        atomic_write_feedback({
+            "body": body,
+            "verdict": parsed.get("overall") if parsed else "no_response",
+            "evaluated_at_unix": time.time(),
+            "eval_elapsed_s": elapsed,
+        })
+
+
+# ---------------------------------------------------------------------------
+# UserPromptSubmit hook handler: inject pending feedback via additionalContext
+# ---------------------------------------------------------------------------
+
+def user_prompt_main(hook_input):
+    """UserPromptSubmit hook handler: consume pending feedback, inject via additionalContext.
+
+    Fast path, typically <50ms: reads pending file (if any), renders the
+    self-describing injection envelope, prints hookSpecificOutput JSON.
+    CC routes the return through processUserInput.ts:227-240, producing a
+    hook_additional_context attachment (messages.ts:4117-4128) -- the
+    correct meta-context path (not queued_command pseudo-user-prompt).
+    """
+    pending = consume_pending_feedback()
+    if not pending:
+        return
+    rendered = render_feedback_for_injection(pending)
+    output = {
+        "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": rendered,
+        }
+    }
     print(json.dumps(output))
+
+
+# ---------------------------------------------------------------------------
+# Main entrypoint: dispatch by hook event name
+# ---------------------------------------------------------------------------
+
+def main():
+    hook_input = json.loads(sys.stdin.read())
+    event = hook_input.get("hook_event_name")
+    if event == "Stop":
+        stop_main(hook_input)
+    elif event == "UserPromptSubmit":
+        user_prompt_main(hook_input)
+    # Other events: silently ignore (should not be registered in hooks.json)
 
 
 if __name__ == "__main__":
