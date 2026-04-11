@@ -20,6 +20,7 @@ from backends import recall_agentic
 from discover import discover_memory
 from utils import (
     DATA_DIR,
+    STATUS_DIR,
     call_sdk_haiku,
     compute_profile_dir,
     extract_context,
@@ -35,7 +36,20 @@ from utils import (
 # ---------------------------------------------------------------------------
 
 STATE_FILE = os.path.join(DATA_DIR, "pair_programmer_state.json")
-PENDING_FEEDBACK_PATH = os.path.join(DATA_DIR, "pp_pending_feedback.json")
+
+
+def _pending_path(session_id):
+    """Per-session pending feedback file path.
+
+    Must be per-session: a global DATA_DIR path lets session A's Stop
+    hook write a pending file that session B's UserPromptSubmit hook
+    consumes, cross-contaminating feedback across concurrent CC sessions.
+    Colocating inside STATUS_DIR/<session_id>/ reuses the same session
+    dir already used by write_status and inherits its cleanup lifecycle.
+    """
+    session_dir = os.path.join(STATUS_DIR, session_id)
+    os.makedirs(session_dir, exist_ok=True)
+    return os.path.join(session_dir, "pp_pending_feedback.json")
 
 SYSTEM_PROMPT = """\
 You are a silent sidecar running inside a Claude Code hook. You observe the main agent's actions and provide feedback from the user's perspective. You are NOT in a conversation with the user -- the user cannot see or respond to your output. Your ONLY job is to evaluate and return structured feedback via the output tool. Never ask questions, never explain, never converse.
@@ -392,19 +406,21 @@ def format_status_summary(parsed):
 # Pending feedback file IO (atomic, CC-managed lifecycle — no daemon)
 # ---------------------------------------------------------------------------
 
-def atomic_write_feedback(data):
-    """Write feedback dict to PENDING_FEEDBACK_PATH atomically.
+def atomic_write_feedback(data, session_id):
+    """Write feedback dict to the session's pending path atomically.
 
     Called by stop_main after Haiku eval produces a feedback body.
     Uses tempfile + os.rename (POSIX-atomic) so a concurrent read from
-    user_prompt_main cannot see a partial file.
+    user_prompt_main cannot see a partial file. Per-session path
+    prevents cross-session pollution when multiple CC sessions run.
     """
-    os.makedirs(DATA_DIR, exist_ok=True)
-    fd, tmp_path = tempfile.mkstemp(dir=DATA_DIR, prefix=".pp_pending_", suffix=".tmp")
+    pending_path = _pending_path(session_id)
+    pending_dir = os.path.dirname(pending_path)
+    fd, tmp_path = tempfile.mkstemp(dir=pending_dir, prefix=".pp_pending_", suffix=".tmp")
     try:
         with os.fdopen(fd, 'w') as f:
             json.dump(data, f, ensure_ascii=False)
-        os.rename(tmp_path, PENDING_FEEDBACK_PATH)
+        os.rename(tmp_path, pending_path)
     except Exception:
         try:
             os.unlink(tmp_path)
@@ -413,16 +429,17 @@ def atomic_write_feedback(data):
         raise
 
 
-def consume_pending_feedback():
-    """Atomically consume PENDING_FEEDBACK_PATH. Returns dict or None.
+def consume_pending_feedback(session_id):
+    """Atomically consume the session's pending feedback. Returns dict or None.
 
     Called by user_prompt_main. Rename-to-.consumed first so a concurrent
     Stop-hook write cannot re-populate the file between our read and unlink.
     Consume-once semantics: each feedback is injected at most once.
     """
-    consumed_path = PENDING_FEEDBACK_PATH + ".consumed"
+    pending_path = _pending_path(session_id)
+    consumed_path = pending_path + ".consumed"
     try:
-        os.rename(PENDING_FEEDBACK_PATH, consumed_path)
+        os.rename(pending_path, consumed_path)
     except FileNotFoundError:
         return None
     try:
@@ -522,12 +539,13 @@ def stop_main(hook_input):
                  elapsed_s=elapsed, cost_usd=pp_cost, model=pp['model'])
 
     if body:
+        session_id = hook_input.get("session_id", "unknown")
         atomic_write_feedback({
             "body": body,
             "verdict": parsed.get("overall") if parsed else "no_response",
             "evaluated_at_unix": time.time(),
             "eval_elapsed_s": elapsed,
-        })
+        }, session_id)
 
 
 # ---------------------------------------------------------------------------
@@ -542,9 +560,17 @@ def user_prompt_main(hook_input):
     CC routes the return through processUserInput.ts:227-240, producing a
     hook_additional_context attachment (messages.ts:4117-4128) -- the
     correct meta-context path (not queued_command pseudo-user-prompt).
+    Logs every invocation so the pipeline can be audited post-hoc from
+    recall.jsonl (verdict / body_chars / pending_found).
     """
-    pending = consume_pending_feedback()
+    session_id = hook_input.get("session_id", "unknown")
+    pending = consume_pending_feedback(session_id)
     if not pending:
+        write_log({
+            "event": "pair_programmer_inject",
+            "session_id": session_id,
+            "pending_found": False,
+        })
         return
     rendered = render_feedback_for_injection(pending)
     output = {
@@ -553,6 +579,15 @@ def user_prompt_main(hook_input):
             "additionalContext": rendered,
         }
     }
+    write_log({
+        "event": "pair_programmer_inject",
+        "session_id": session_id,
+        "pending_found": True,
+        "verdict": pending.get("verdict"),
+        "body_chars": len(pending.get("body", "")),
+        "rendered_chars": len(rendered),
+        "age_s": int(time.time() - pending.get("evaluated_at_unix", time.time())),
+    })
     print(json.dumps(output))
 
 
