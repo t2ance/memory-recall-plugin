@@ -190,18 +190,42 @@ Read the user's existing statusLine configuration from `~/.claude/settings.json`
    - Main agent (no `agent_id`): always display
    - Subagent (has `agent_id`): only display if `state == "running"`
 4. Color coding: green for done, yellow for running, red for error/timeout
-5. Stale detection: if state is "running" and `started_at` is older than 120 seconds, show as "timeout"
+5. Stale detection: if state is "running" and `started_at` is older than the `timeout_s` field value (default 60s), show as "timeout"
 6. The script MUST exit with code 0 (add `exit 0` at end). CC discards output on non-zero exit.
 7. Plugin status lines appear after the user's existing statusLine output.
 
+### Status file fields (read these via jq)
+
+| Field | Purpose |
+|---|---|
+| `hook` | hook name label |
+| `state` | `done` / `running` / `error` / `timeout` |
+| `agent_id`, `agent_type` | subagent identifiers (empty for main agent) |
+| `summary` | one-line status text |
+| `elapsed_s` | duration of last invocation |
+| `cost_usd` | cost of **last invocation** |
+| `cumulative_cost_usd` | **total session cost** for this hook (sums across all invocations, skipped/running excluded) |
+| `model` | model used |
+| `started_at`, `finished_at` | timestamps |
+| `total_runs`, `skipped_count` | counters |
+| `timeout_s` | per-hook timeout for stale detection |
+| `cooldown_until` | unix ts; when set and in future, hook is in cooldown |
+
+### Default display format (use this as the template)
+
+Render each hook as one line with:
+- **Annotation** (in parentheses, dim gray): `model, Σ$cumulative_cost_usd[, state_tag]` — model and session-cumulative cost live here. State tags (`running Ns`, `cooldown Ns`, `timeout`, `error`) are appended conditionally.
+- **Content** (after `:`): `summary | elapsed_s | $cost_usd` — the three parts are separated by dim `|` bars. This is the format the user expects as the default.
+
+```
+pair_programmer (haiku, Σ$2.5576): ok | 201.71s | $0.1438
+curator (haiku, Σ$0.7234, cooldown 1800s): 24 files | 3.21s | $0.1110
+memory_save (haiku, Σ$0.4521): add profile_x.md | 1.23s | $0.0042
+recall (haiku, Σ$0.0891, running 5s): 3 items recalled | 0.42s | $0.003
+```
+
+Color the hook label + annotation block based on `state`: green for done, yellow for running/cooldown, red for error/timeout.
+
 ### If user has no statusLine configured
 
-Create a new script at `~/.claude/statusline-memory-recall.sh` that reads the status files and outputs them. Then set `statusLine.command` in `~/.claude/settings.json` to `bash ~/.claude/statusline-memory-recall.sh`.
-
-### Display format example
-
-```
-recall: 3 items recalled | 0.42s $0.003 haiku 14:32:05 x42
-memory_save: running... (started 14:33:01)
-pair_programmer[Explore]: running... (started 14:34:01)
-```
+Create a new script at `~/.claude/statusline-memory-recall.sh` that reads the status files and outputs them per the default format above. Then set `statusLine.command` in `~/.claude/settings.json` to `bash ~/.claude/statusline-memory-recall.sh`.
