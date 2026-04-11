@@ -76,6 +76,22 @@ You are given a list of existing memories below. Before proposing ADD:
 - project: work context, decisions, constraints. Include Why + How to apply.
 - reference: pointers to external resources
 
+## Naming Rules (apply to the `name` field for ADD)
+
+- Target 20 characters or fewer. Hard cap 30. Shorter is better.
+- snake_case, lowercase, ASCII only.
+- Use the distinctive noun first, not a long descriptive phrase.
+  - BAD: `statusline_architecture_persistent_dashboard_and_lifecycle`
+  - GOOD: `statusline_dashboard`
+  - BAD: `memory_recall_plugin_architecture_and_development`
+  - GOOD: `mr_plugin_arch`
+- Prefer 1-3 tokens. Skip filler words (the, and, with, for, of).
+- Do NOT include the memory type as a prefix (no `feedback_...`, `project_...`, `user_...`) -- the type field already carries that.
+- Do NOT restate the full topic; pick the discriminating keyword.
+- When unsure which word to keep, keep the one a future grep would search for.
+
+These names show up in the statusline on every recall, so long names make the UI unreadable.
+
 ## Output
 
 Return ONLY a JSON object (no markdown, no explanation before/after):

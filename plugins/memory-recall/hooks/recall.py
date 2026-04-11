@@ -244,6 +244,14 @@ def merge_results(results, proj_mem_dir, global_mem_dir, max_chars, rc=None, dim
 # ---------------------------------------------------------------------------
 
 
+def _short_name(name, max_chars=20):
+    """Truncate a memory/skill/tool/agent name for statusline display.
+    Trailing ellipsis when the name exceeds max_chars."""
+    if len(name) <= max_chars:
+        return name
+    return name[:max_chars - 1] + "…"
+
+
 def summarize_result(dim, result):
     """Extract a compact summary of a single dimension's result for logging."""
     if result is None:
@@ -376,10 +384,10 @@ def main():
         if result is None:
             continue
         if result["type"] == "memory_files":
-            names = [os.path.splitext(os.path.basename(f))[0] for f in result["files"]]
+            names = [_short_name(os.path.splitext(os.path.basename(f))[0]) for f in result["files"]]
             summary_parts.append(f"memory: {', '.join(names)}")
         elif result["type"] == "recommendations":
-            names = [item["name"] for item in result["items"]]
+            names = [_short_name(item["name"]) for item in result["items"]]
             summary_parts.append(f"{dim}: {', '.join(names)}")
 
     output = {
