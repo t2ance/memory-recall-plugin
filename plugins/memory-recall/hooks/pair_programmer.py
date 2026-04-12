@@ -893,7 +893,7 @@ def user_prompt_main(hook_input):
         "session_id": session_id,
         "pending_found": True,
         "verdict": pending.get("verdict"),
-        "body_chars": len(pending.get("body", "")),
+        "body_chars": len(pending.get("body") or ""),
         "rendered_chars": len(rendered),
     })
     print(json.dumps(output))
