@@ -6,6 +6,7 @@ discover.py, and backends.py.
 """
 
 import asyncio
+import fcntl
 import json
 import os
 import subprocess
@@ -44,6 +45,48 @@ def maybe_go_async(is_async):
     if is_async:
         print(json.dumps({"async": True}))
         sys.stdout.flush()
+
+
+def _bump_hook_cumulative(session_dir, hook_name, cost_delta):
+    """Atomically add cost_delta to {hook_name}.json's cumulative_cost_usd.
+
+    Session-wide cost aggregation: subagent hook invocations write to a
+    separate {hook_name}_{agent_id}.json file for display preservation, but
+    their cost must still roll up into the main {hook_name}.json's cumulative
+    so statusline sees the session-wide total without doing its own aggregation.
+
+    Safe under concurrent writers via a dedicated lockfile + tempfile+rename.
+    Does NOT touch any display field (state, summary, elapsed_s, etc.) -- only
+    bumps cumulative_cost_usd. If the main file does not yet exist, creates a
+    minimal stub record with the cumulative seeded to cost_delta.
+    """
+    main_path = os.path.join(session_dir, f"{hook_name}.json")
+    lock_path = main_path + ".lock"
+    os.makedirs(session_dir, exist_ok=True)
+
+    lock_fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        data = {}
+        if os.path.exists(main_path):
+            try:
+                with open(main_path) as f:
+                    data = json.loads(f.read())
+            except (json.JSONDecodeError, OSError):
+                data = {}
+        data["cumulative_cost_usd"] = round(
+            data.get("cumulative_cost_usd", 0) + cost_delta, 4
+        )
+        data.setdefault("hook", hook_name)
+        data.setdefault("state", "")
+        data.setdefault("total_runs", 0)
+        tmp_path = main_path + ".tmp"
+        with open(tmp_path, "w") as f:
+            f.write(json.dumps(data))
+        os.rename(tmp_path, main_path)
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
 
 
 def write_status(hook_name, state, hook_input, summary="", elapsed_s=0, cost_usd=0, model="", timeout_s=60, skipped=False, _cache={}, **extra):
@@ -127,6 +170,14 @@ def write_status(hook_name, state, hook_input, summary="", elapsed_s=0, cost_usd
     with open(tmp_path, "w") as f:
         f.write(json.dumps(data))
     os.rename(tmp_path, path)
+
+    # Subagent cost rollup: a subagent-owned write ({hook}_{agent_id}.json)
+    # has its own independent cumulative, but that cost must also accrue to
+    # the main {hook}.json's cumulative so the statusline shows the session-
+    # wide total without having to aggregate files itself. Only done writes
+    # with positive cost bump the main file.
+    if agent_id and state == "done" and isinstance(cost_usd, (int, float)) and cost_usd > 0:
+        _bump_hook_cumulative(session_dir, hook_name, cost_usd)
 
 
 def hook_main(fn):

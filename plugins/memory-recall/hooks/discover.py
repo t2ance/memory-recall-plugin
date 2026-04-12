@@ -12,18 +12,34 @@ import json
 import os
 
 from constants import BUILTIN_AGENTS, BUILTIN_SKILLS, DEFERRED_TOOLS
-from utils import compute_memory_dirs, parse_frontmatter as _parse_frontmatter, HOME
+from utils import (
+    compute_memory_dirs,
+    compute_profile_dir,
+    parse_frontmatter as _parse_frontmatter,
+    HOME,
+)
 
 
 # -- Memory ------------------------------------------------------------------
 
 
 def discover_memory(cwd):
-    """Discover memory files from project and global memory directories."""
+    """Discover memory files from profile, global, and project memory dirs.
+
+    Each entry is tagged with a `tier` field in {'profile', 'global', 'project'}.
+    Returns (entries, proj_mem_dir, global_mem_dir, profile_mem_dir).
+    """
     proj_mem_dir, global_mem_dir = compute_memory_dirs(cwd)
+    profile_mem_dir = compute_profile_dir()
+
+    tier_dirs = [
+        ("profile", profile_mem_dir),
+        ("global", global_mem_dir),
+        ("project", proj_mem_dir),
+    ]
 
     entries = []
-    for mem_dir in [proj_mem_dir, global_mem_dir]:
+    for tier, mem_dir in tier_dirs:
         if not os.path.isdir(mem_dir):
             continue
         for fname in sorted(os.listdir(mem_dir)):
@@ -35,8 +51,9 @@ def discover_memory(cwd):
                 "name": fm.get("name", fname),
                 "description": fm.get("description", ""),
                 "id": path,
+                "tier": tier,
             })
-    return entries, proj_mem_dir, global_mem_dir
+    return entries, proj_mem_dir, global_mem_dir, profile_mem_dir
 
 
 # -- Skills -------------------------------------------------------------------

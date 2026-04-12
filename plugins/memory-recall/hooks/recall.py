@@ -197,7 +197,7 @@ def format_recommendation_result(result, resources=None, output_granularity="tit
     return None
 
 
-def merge_results(results, proj_mem_dir, global_mem_dir, max_chars, rc=None, dim_resources=None):
+def merge_results(results, proj_mem_dir, global_mem_dir, max_chars, rc=None, dim_resources=None, profile_mem_dir=""):
     """Merge all dimension results into a single additionalContext string.
 
     rc is config['recall'] (the recall subsystem dict).
@@ -230,12 +230,16 @@ def merge_results(results, proj_mem_dir, global_mem_dir, max_chars, rc=None, dim
             f"CRITICAL: Before responding, check your memory directories for relevant context. "
             f"Read the MEMORY.md index in each directory and Read any topic files relevant to the user's query. "
             f"Also review ~/.claude/CLAUDE.md for global instructions. "
+            f"Profile memory: {profile_mem_dir} "
             f"Project memory: {proj_mem_dir} "
             f"Global memory: {global_mem_dir}"
         )
 
     header = "As you answer the user's questions, you can use the following context:\n"
-    footer = f"\n\nProject memory: {proj_mem_dir}\nGlobal memory: {global_mem_dir}"
+    footer_lines = [f"Project memory: {proj_mem_dir}", f"Global memory: {global_mem_dir}"]
+    if profile_mem_dir:
+        footer_lines.append(f"Profile memory: {profile_mem_dir}")
+    footer = "\n\n" + "\n".join(footer_lines)
     return header + "\n\n".join(sections) + footer
 
 
@@ -291,11 +295,11 @@ def main():
         write_status("recall", "done", hook_input, skipped=True)
         sys.exit(0)
 
-    write_status("recall", "running", hook_input, timeout_s=60)
+    write_status("recall", "running", hook_input, timeout_s=rc['timeout_s'])
 
     # Discover resources for each enabled dimension
     tasks = []
-    proj_mem_dir = global_mem_dir = ""
+    proj_mem_dir = global_mem_dir = profile_mem_dir = ""
     memory_dirs = []
     discovery_counts = {}
 
@@ -305,8 +309,8 @@ def main():
             continue
 
         if dim == "memory":
-            resources, proj_mem_dir, global_mem_dir = discover_memory(cwd)
-            memory_dirs = [d for d in [proj_mem_dir, global_mem_dir] if os.path.isdir(d)]
+            resources, proj_mem_dir, global_mem_dir, profile_mem_dir = discover_memory(cwd)
+            memory_dirs = [d for d in [profile_mem_dir, global_mem_dir, proj_mem_dir] if os.path.isdir(d)]
         elif dim == "skills":
             resources = discover_skills()
         elif dim == "tools":
@@ -324,8 +328,9 @@ def main():
 
     # If memory wasn't enabled, still compute dirs for output footer
     if not proj_mem_dir:
-        from utils import compute_memory_dirs
+        from utils import compute_memory_dirs, compute_profile_dir
         proj_mem_dir, global_mem_dir = compute_memory_dirs(cwd)
+        profile_mem_dir = compute_profile_dir()
 
     # Extract conversation context (shared across dimensions)
     context = ""
@@ -347,7 +352,7 @@ def main():
 
     # Merge output
     dim_resources = {dim: resources for dim, _, resources in tasks}
-    additional_context = merge_results(results, proj_mem_dir, global_mem_dir, rc["max_content_chars"], rc, dim_resources)
+    additional_context = merge_results(results, proj_mem_dir, global_mem_dir, rc["max_content_chars"], rc, dim_resources, profile_mem_dir)
 
     # Compute totals
     total_input_tokens = sum(u.get("input_tokens", 0) for u in per_dim_usage.values())

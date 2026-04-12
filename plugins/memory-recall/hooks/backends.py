@@ -42,8 +42,24 @@ Matching rules:
 - The query may be in any language. Match by semantic meaning, not surface keywords.
 - Short or vague queries (like "test") should still match resources related to testing/debugging."""
 
+_MEMORY_TIERED_INSTRUCTIONS = """\
+The memory catalog is organized into three tiers:
+- profile: distilled user patterns (working style, preferences, habits)
+- global: user-level facts and feedback that apply across all projects
+- project: project-specific facts, decisions, and context
+
+Select up to 2 memory files FROM EACH tier, for a total of 0-6 files.
+
+Relevance means EITHER of:
+(a) Factual content related to the query -- names, concepts, or facts the user needs for this task.
+(b) User preferences, coding style, design principles, or prior feedback that should shape HOW the agent approaches this task -- even if the preference does not literally mention anything in the query.
+
+Your goal: help the main agent complete this task in a way that matches the user's preferences and working style. A "terse answers" preference is relevant to a "plan an auth middleware" query precisely because it governs HOW the plan should be written.
+
+If a tier has nothing relevant, return fewer than 2 files (or zero) for that tier. Never force inclusion."""
+
 AGENTIC_SYSTEM_PROMPTS = {
-    "memory": f"{_SIDECAR_PREAMBLE}\n\nSelect 0-3 memory files most relevant to the query.",
+    "memory": f"{_SIDECAR_PREAMBLE}\n\n{_MEMORY_TIERED_INSTRUCTIONS}",
     "skills": f"{_SIDECAR_PREAMBLE}\n\nSelect 0-3 skills most relevant to the user's task.",
     "tools": f"{_SIDECAR_PREAMBLE}\n\nSelect 0-5 tools/MCP servers most relevant to the user's task.",
     "agents": f"{_SIDECAR_PREAMBLE}\n\nSelect 0-2 agent types best suited for the user's task.",
@@ -70,9 +86,11 @@ _ITEMS_SCHEMA = {
 _MEMORY_SCHEMA = {
     "type": "object",
     "properties": {
-        "files": {"type": "array", "items": {"type": "string"}},
+        "profile": {"type": "array", "items": {"type": "string"}, "maxItems": 2},
+        "global": {"type": "array", "items": {"type": "string"}, "maxItems": 2},
+        "project": {"type": "array", "items": {"type": "string"}, "maxItems": 2},
     },
-    "required": ["files"],
+    "required": ["profile", "global", "project"],
 }
 
 AGENTIC_SCHEMAS = {
@@ -81,6 +99,72 @@ AGENTIC_SCHEMAS = {
     "tools": {"type": "json_schema", "schema": _ITEMS_SCHEMA},
     "agents": {"type": "json_schema", "schema": _ITEMS_SCHEMA},
 }
+
+
+_MEMORY_TIERS = ("profile", "global", "project")
+
+
+def _build_memory_resolver(resources):
+    """Build a multi-key lookup map: any plausible identifier -> canonical path.
+
+    Haiku is unreliable about which field of `- {name}: {desc} [id={path}]` it
+    echoes back. Map every variant (full path, basename, basename without ext,
+    frontmatter name) to the same canonical path so post-parse resolution
+    survives Haiku's guesswork.
+    """
+    resolver = {}
+    for r in resources:
+        path = r["id"]
+        keys = {
+            path,
+            os.path.basename(path),
+            os.path.splitext(os.path.basename(path))[0],
+            r.get("name", ""),
+            os.path.splitext(r.get("name", ""))[0],
+        }
+        for k in keys:
+            if k:
+                resolver[k] = path
+    return resolver
+
+
+def _resolve_loose(ident, resolver):
+    """Last-ditch fuzzy lookup: try with/without .md, with underscores swapped."""
+    candidates = [
+        ident.rstrip(".md"),
+        ident + ".md",
+        ident.replace("-", "_"),
+        ident.replace("_", "-"),
+    ]
+    for c in candidates:
+        if c in resolver:
+            return resolver[c]
+    return None
+
+
+def _build_memory_catalog(resources):
+    """Build a tier-grouped catalog string for memory resources.
+
+    Groups entries by their `tier` field into profile / global / project
+    sections so the agentic selector can pick 0-2 per tier.
+    """
+    by_tier = {t: [] for t in _MEMORY_TIERS}
+    for r in resources:
+        tier = r.get("tier", "project")
+        by_tier.setdefault(tier, []).append(r)
+
+    sections = []
+    for tier in _MEMORY_TIERS:
+        bucket = by_tier.get(tier, [])
+        if not bucket:
+            sections.append(f"## {tier} tier (0 files):\n(empty)")
+            continue
+        lines = [
+            f"- {r['name']}: {r['description']} [id={r['id']}]"
+            for r in bucket
+        ]
+        sections.append(f"## {tier} tier ({len(bucket)} files):\n" + "\n".join(lines))
+    return "\n\n".join(sections)
 
 
 async def recall_agentic(dim, resources, query, context, model, input_granularity="title_desc", effort="low"):
@@ -92,7 +176,11 @@ async def recall_agentic(dim, resources, query, context, model, input_granularit
     if not resources:
         return None, {}
 
-    if input_granularity == "full":
+    if dim == "memory":
+        # Memory uses tier-grouped catalog regardless of input_granularity so
+        # Haiku can pick 0-2 per tier under the new selection prompt.
+        catalog = _build_memory_catalog(resources)
+    elif input_granularity == "full":
         lines = []
         for r in resources:
             path = r.get("content_path") or r["id"]
@@ -123,7 +211,16 @@ async def recall_agentic(dim, resources, query, context, model, input_granularit
         return None, usage
 
     if dim == "memory":
-        files = parsed.get("files", [])
+        # New tiered schema: merge per-tier lists, capping each tier at 2.
+        # Haiku may return identifiers in any of: full path, basename, name --
+        # resolve them all back to canonical paths via the resource catalog.
+        resolver = _build_memory_resolver(resources)
+        files = []
+        for tier in _MEMORY_TIERS:
+            for ident in parsed.get(tier, [])[:2]:
+                resolved = resolver.get(ident) or _resolve_loose(ident, resolver)
+                if resolved:
+                    files.append(resolved)
         if not files:
             return None, usage
         return {"type": "memory_files", "files": files}, usage
@@ -140,7 +237,11 @@ async def recall_agentic(dim, resources, query, context, model, input_granularit
 MERGED_SYSTEM_PROMPT = (
     "You are a context recommender. Given multiple catalogs and a query, "
     "select the most relevant items from EACH catalog independently. "
-    "Select 0-3 items per catalog."
+    "Select 0-3 items per catalog. "
+    "For the memory catalog, it is further grouped into profile/global/project tiers: "
+    "pick up to 2 files PER TIER. Relevance means either (a) factual content related to the query, "
+    "or (b) user preferences / coding style / design principles that should shape HOW the agent "
+    "approaches this task, even if they do not literally mention the query topic."
 )
 
 
@@ -152,11 +253,15 @@ async def recall_agentic_merged(dim_resources, query, context, model, effort="lo
     # Build one prompt with all catalogs
     sections = []
     for dim, resources in dim_resources:
-        catalog = "\n".join(
-            f"- {r['name']}: {r['description']} [id={r['id']}]"
-            for r in resources
-        )
-        limit = "0-3 files" if dim == "memory" else "0-3 items"
+        if dim == "memory":
+            catalog = _build_memory_catalog(resources)
+            limit = "0-2 files per tier (profile/global/project)"
+        else:
+            catalog = "\n".join(
+                f"- {r['name']}: {r['description']} [id={r['id']}]"
+                for r in resources
+            )
+            limit = "0-3 items"
         sections.append(f"## {dim} catalog ({limit}):\n{catalog}")
 
     prompt_parts = ["\n\n".join(sections)]
@@ -185,12 +290,26 @@ async def recall_agentic_merged(dim_resources, query, context, model, effort="lo
     if not parsed:
         return {}
 
+    # Build resolvers for memory dim (post-parse path normalization)
+    memory_resolvers = {}
+    for d, res in dim_resources:
+        if d == "memory":
+            memory_resolvers[d] = _build_memory_resolver(res)
+
     # Parse per-dimension results
     results = {}
     for dim, _ in dim_resources:
         dim_data = parsed.get(dim, {})
         if dim == "memory":
-            files = dim_data.get("files", [])
+            # New tiered schema: merge per-tier lists, capping each at 2,
+            # resolving any identifier variant back to canonical paths.
+            resolver = memory_resolvers[dim]
+            files = []
+            for tier in _MEMORY_TIERS:
+                for ident in dim_data.get(tier, [])[:2]:
+                    resolved = resolver.get(ident) or _resolve_loose(ident, resolver)
+                    if resolved:
+                        files.append(resolved)
             results[dim] = ({"type": "memory_files", "files": files} if files else None, usage)
         else:
             items = dim_data.get("items", [])

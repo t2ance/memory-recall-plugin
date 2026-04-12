@@ -271,7 +271,7 @@ def main():
         write_status("memory_save", "done", hook_input, skipped=True)
         return
 
-    write_status("memory_save", "running", hook_input, timeout_s=300)
+    write_status("memory_save", "running", hook_input, timeout_s=ms['timeout_s'])
 
     cwd = hook_input.get("cwd", "")
     last_msg = hook_input.get("last_assistant_message", "")

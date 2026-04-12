@@ -1,6 +1,6 @@
 {
   "name": "memory-recall",
-  "version": "4.0.2",
+  "version": "4.1.0",
   "description": "Multi-dimension recall + auto-save. Recall: memory, skills, tools, agent types with reminder/agentic/embedding backends. Auto-save: Stop hook analyzes each turn and persists valuable knowledge via Haiku CRUD.",
   "author": {
     "name": "peijia"
@@ -39,6 +39,14 @@
       "title": "Recall Async",
       "description": "Run recall hook asynchronously. Default false (sync) because recall must inject context before agent responds.",
       "default": false
+    },
+    "recall_timeout_s": {
+      "type": "number",
+      "title": "Recall Timeout (seconds)",
+      "description": "Soft work-budget for recall hook shown in status display. Hard kill is set in hooks.json.",
+      "default": 60,
+      "min": 5,
+      "max": 600
     },
     "recall_agentic_mode": {
       "type": "string",
@@ -200,6 +208,14 @@
       "description": "Run memory save hook asynchronously. Default true -- save doesn't need to block.",
       "default": true
     },
+    "memory_save_timeout_s": {
+      "type": "number",
+      "title": "Memory Save Timeout (seconds)",
+      "description": "Soft work-budget for memory save hook shown in status display. Hard kill is set in hooks.json.",
+      "default": 300,
+      "min": 30,
+      "max": 1800
+    },
     "memory_save_targets": {
       "type": "string",
       "title": "Memory Save Targets",
@@ -237,6 +253,14 @@
       "title": "Pair Programmer Async",
       "description": "Run pair programmer hook asynchronously. Default true.",
       "default": true
+    },
+    "pair_programmer_timeout_s": {
+      "type": "number",
+      "title": "Pair Programmer Timeout (seconds)",
+      "description": "Soft work-budget for pair programmer detached eval shown in status display. Hard kill is set in hooks.json.",
+      "default": 300,
+      "min": 30,
+      "max": 1800
     },
     "pair_programmer_sample_rate": {
       "type": "number",
@@ -325,6 +349,14 @@
       "title": "Curator Async",
       "description": "Run curator asynchronously. Default true.",
       "default": true
+    },
+    "curator_timeout_s": {
+      "type": "number",
+      "title": "Curator Timeout (seconds)",
+      "description": "Soft work-budget for curator hook shown in status display. Hard kill is set in hooks.json.",
+      "default": 600,
+      "min": 60,
+      "max": 3600
     },
     "curator_cooldown_h": {
       "type": "number",

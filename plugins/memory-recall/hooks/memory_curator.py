@@ -860,7 +860,7 @@ def main():
     if not cwd:
         return
 
-    write_status("curator", "running", hook_input, timeout_s=600)
+    write_status("curator", "running", hook_input, timeout_s=cu['timeout_s'])
 
     # Wait for memory_save to finish first (both run on Stop hook)
     session_id = hook_input.get("session_id", "")
