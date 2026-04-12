@@ -88,8 +88,6 @@ Where `{dim}` is one of: `memory`, `skills`, `tools`, `agents`.
 | `pair_programmer_context_max_chars` | Max conversation context chars | `3000` |
 | `pair_programmer_max_tool_input_chars` | Max tool input chars in trajectory | `2000` |
 | `pair_programmer_max_tool_output_chars` | Max tool output chars in trajectory | `1000` |
-| `pair_programmer_max_recall_files` | Max memory files to recall | `5` |
-| `pair_programmer_max_memory_file_chars` | Max chars per recalled memory file | `2000` |
 
 **Curator options:**
 
@@ -133,16 +131,16 @@ Config: `memory_save_enabled` (default true), `memory_save_model` (default haiku
 
 After action tools (Edit/Write/Bash/NotebookEdit), the hook:
 
-1. Reads distilled user profile from `DATA_DIR/profile/` (PP's private knowledge)
-2. Builds trajectory from current tool call + recent conversation
-3. Recalls relevant memories from Memory Bank
-4. Evaluates across 3 dimensions (preference alignment, experience recall, strategic oversight)
+1. Builds trajectory from current tool call + recent conversation
+2. Passes three memory directory paths (profile, global memory, project memory) to a Haiku agent loop
+3. Haiku uses `Read` / `Grep` / `Glob` tools to fetch only the memory files relevant to the current action (agent-centric retrieval, no pre-loading)
+4. Haiku evaluates across 3 dimensions (preference alignment, experience recall, strategic oversight) and emits structured output
 5. Outputs one of 3 states:
    - `ok`: nothing to flag
    - `suggest`: soft suggestion via `additionalContext`, main agent prefixes response with `[PP preference]`
    - `break`: strongly-worded directive to stop and ask user for clarification, main agent prefixes with `[PP break]`
 
-Enabled by default. 120s cooldown between evaluations. Profile files are produced by the curator's DISTILL phase and contain distilled user thinking patterns.
+Enabled by default. 120s cooldown between evaluations. Profile files are produced by the curator's DISTILL phase and contain distilled user thinking patterns; Haiku reads them on-demand via `Read`/`Grep` just like any other memory file.
 
 ### Async Support
 

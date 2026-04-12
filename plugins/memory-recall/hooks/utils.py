@@ -413,11 +413,13 @@ def extract_context(transcript_path, context_messages, context_max_chars):
 # Agent SDK wrapper
 # ---------------------------------------------------------------------------
 
-async def call_sdk_haiku(prompt, system_prompt, output_schema, model="haiku", max_budget_usd=None, effort=""):
+async def call_sdk_haiku(prompt, system_prompt, output_schema, model="haiku", max_budget_usd=None, effort="", tools=None):
     """Call Haiku via Agent SDK with structured output.
 
     Returns (parsed_json_or_None, usage_dict).
     Note: effort="low" is incompatible with complex structured output schemas.
+    tools: list of tool names Haiku may use during the eval loop (e.g.
+    ["Read", "Grep", "Glob"]). Default [] = single-shot call with no tool access.
     """
     from claude_agent_sdk import query as sdk_query
     from claude_agent_sdk import ClaudeAgentOptions
@@ -432,7 +434,7 @@ async def call_sdk_haiku(prompt, system_prompt, output_schema, model="haiku", ma
     kwargs = dict(
         system_prompt=system_prompt,
         model=model,
-        tools=[],
+        tools=tools if tools is not None else [],
         output_format=output_schema,
         settings='{"disableAllHooks": true}',
         env={"CLAUDECODE": "", "CLAUDE_AGENT_SDK_SKIP_VERSION_CHECK": "1"},

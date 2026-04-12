@@ -310,22 +310,6 @@
       "min": 500,
       "max": 10000
     },
-    "pair_programmer_max_recall_files": {
-      "type": "number",
-      "title": "Pair Programmer Max Recall Files",
-      "description": "Maximum number of memory files to recall for evaluation context.",
-      "default": 5,
-      "min": 1,
-      "max": 10
-    },
-    "pair_programmer_max_memory_file_chars": {
-      "type": "number",
-      "title": "Pair Programmer Max Memory File Chars",
-      "description": "Maximum characters to read from each recalled memory file.",
-      "default": 2000,
-      "min": 500,
-      "max": 10000
-    },
     "curator_enabled": {
       "type": "boolean",
       "title": "Curator Enabled",

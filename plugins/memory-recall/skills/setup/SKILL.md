@@ -4,7 +4,7 @@ description: "Interactive setup for memory-recall plugin. Configure recall dimen
 user_invocable: true
 ---
 
-# Memory-Recall Plugin Setup (v4.0.0)
+# Memory-Recall Plugin Setup (v4.1.0)
 
 Guide the user through configuring the memory-recall plugin. 4 subsystems, each with enabled/model/effort/async.
 
